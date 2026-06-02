@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from .cities import normalize_city
+
 # Values that mean "no data" in the feed.
 _PLACEHOLDERS = {"", "לא ידוע", "none", "null", "nan", "na", "n/a"}
 
@@ -84,7 +86,9 @@ def normalize_store(row: dict, chain_name_default: str) -> dict | None:
         "store_code": store_code,
         "store_name": clean_str(row.get("storename")),
         "address": clean_str(row.get("address")),
-        "city": clean_str(row.get("city")),
+        # Unify across chains: Shufersal sends a (variant) name, Rami Levy / Osher
+        # Ad send a numeric CBS code — fall back to the store name when needed.
+        "city": normalize_city(row.get("city"), row.get("storename")),
         "zip_code": clean_str(row.get("zipcode")),
     }
 
