@@ -62,7 +62,7 @@ export default function SearchBar({ onAdd }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => (results.length || error) && setOpen(true)}
-          placeholder="חפשו מוצר... (למשל: חלב, קוקה קולה, במבה)"
+          placeholder="חפשו מוצר..."
           className="w-full rounded-2xl border border-slate-200 bg-white py-4 pr-14 pl-24 text-lg shadow-sm shadow-slate-900/5 outline-none transition focus:border-emerald-400 focus:shadow-lg focus:shadow-emerald-600/10 focus:ring-4 focus:ring-emerald-100"
         />
         {loading && (
