@@ -8,7 +8,6 @@ import { compareBasket, getCities } from './api'
 const STORAGE_KEY = 'zolt.basket'
 
 export default function App() {
-  // basket: [{ product, quantity }]
   const [basket, setBasket] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? []
@@ -33,7 +32,6 @@ export default function App() {
       .catch(() => setCities([]))
   }, [])
 
-  // A comparison is tied to a specific basket + city — drop it when either changes.
   useEffect(() => {
     setComparison(null)
     setCompareError('')
@@ -62,7 +60,7 @@ export default function App() {
         it.product.id === id
           ? it.quantity > 1
             ? [{ ...it, quantity: it.quantity - 1 }]
-            : [] // drop when it would reach zero
+            : []
           : [it],
       ),
     )
@@ -77,8 +75,7 @@ export default function App() {
     setComparison(null)
     try {
       const items = basket.map((it) => ({ product_id: it.product.id, quantity: it.quantity }))
-      const result = await compareBasket(city, items)
-      setComparison(result)
+      setComparison(await compareBasket(city, items))
     } catch {
       setCompareError('ההשוואה נכשלה — ודאו שהשרת פעיל ונסו שוב.')
     } finally {
@@ -87,13 +84,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-full bg-slate-50">
+    <div className="flex min-h-full flex-col bg-gradient-to-b from-slate-50 via-white to-emerald-50/40">
       <Header />
 
-      <main className="mx-auto grid max-w-6xl gap-6 px-4 py-8 lg:grid-cols-3">
+      <main className="mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-8 lg:grid-cols-3">
         <section className="lg:col-span-2">
           <div className="mb-6">
-            <h2 className="mb-1 text-2xl font-black text-slate-800 sm:text-3xl">
+            <h2 className="mb-1 text-2xl font-black tracking-tight text-slate-800 sm:text-3xl">
               כמה עולה הסל שלכם?
             </h2>
             <p className="text-slate-500">
@@ -103,15 +100,14 @@ export default function App() {
 
           <SearchBar onAdd={addProduct} />
 
-          {/* Results area */}
           {comparing && (
-            <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">
+            <div className="animate-in mt-8 rounded-3xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
               משווים מחירים בין הסניפים… ⏳
             </div>
           )}
 
           {compareError && !comparing && (
-            <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700">
+            <div className="animate-in mt-8 rounded-3xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700 shadow-sm">
               {compareError}
             </div>
           )}
@@ -119,17 +115,17 @@ export default function App() {
           {comparison && !comparing && <ComparisonTable result={comparison} />}
 
           {!comparison && !comparing && !compareError && (
-            <div className="mt-10 rounded-2xl border border-dashed border-slate-200 bg-white/60 p-10 text-center">
+            <div className="mt-10 rounded-3xl border border-dashed border-slate-200 bg-white/60 p-12 text-center">
               {basket.length === 0 ? (
                 <>
-                  <div className="text-4xl">🛒</div>
+                  <div className="text-5xl">🛒</div>
                   <p className="mt-3 font-medium text-slate-500">
                     התחילו בהקלדת שם מוצר בתיבת החיפוש
                   </p>
                 </>
               ) : (
                 <>
-                  <div className="text-4xl">⚖️</div>
+                  <div className="text-5xl">⚖️</div>
                   <p className="mt-3 font-medium text-slate-500">
                     {city
                       ? 'לחצו "השוו מחירים" כדי לראות את הטבלה'
@@ -154,6 +150,10 @@ export default function App() {
           comparing={comparing}
         />
       </main>
+
+      <footer className="mx-auto w-full max-w-6xl px-4 py-6 text-center text-xs text-slate-400">
+        Zolt · השוואת מחירים · <a href="/admin" className="transition hover:text-emerald-600">ניהול</a>
+      </footer>
     </div>
   )
 }

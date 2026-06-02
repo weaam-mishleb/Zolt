@@ -13,4 +13,35 @@ body,
 
 body {
   font-family: var(--font-sans);
+  background-color: #f8fafc;
+}
+
+/* Subtle entrance animation for results / cards. */
+@keyframes zolt-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-in {
+  animation: zolt-fade-in-up 0.35s ease-out both;
+}
+
+/* Thin, soft scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
 }
