@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import CityCombobox from './CityCombobox.jsx'
 
 export default function BasketSidebar({
@@ -7,6 +8,7 @@ export default function BasketSidebar({
   onCityChange,
   onInc,
   onDec,
+  onSetQty,
   onRemove,
   onClear,
   onCompare,
@@ -58,7 +60,7 @@ export default function BasketSidebar({
                   >
                     −
                   </button>
-                  <span className="w-6 text-center text-sm font-bold text-slate-800">{quantity}</span>
+                  <QuantityInput value={quantity} onChange={(n) => onSetQty(product.id, n)} />
                   <button
                     onClick={() => onInc(product.id)}
                     className="grid h-7 w-7 place-items-center rounded-full text-emerald-600 transition hover:bg-emerald-50"
@@ -93,5 +95,47 @@ export default function BasketSidebar({
         )}
       </div>
     </aside>
+  )
+}
+
+/**
+ * Editable quantity field: type freely (positive integers only), may be empty
+ * while typing, and falls back to 1 on blur / invalid input. Stays in sync with
+ * the +/- buttons via the `value` prop.
+ */
+function QuantityInput({ value, onChange }) {
+  const [text, setText] = useState(String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  function handleChange(e) {
+    const v = e.target.value
+    if (v === '' || /^\d+$/.test(v)) {
+      setText(v)
+      const n = parseInt(v, 10)
+      if (Number.isInteger(n) && n >= 1) onChange(n)
+    }
+  }
+
+  function handleBlur() {
+    const n = parseInt(text, 10)
+    const safe = Number.isInteger(n) && n >= 1 ? n : 1
+    setText(String(safe))
+    onChange(safe)
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onFocus={(e) => e.target.select()}
+      aria-label="כמות"
+      className="w-9 rounded-md bg-transparent text-center text-sm font-bold text-slate-800 outline-none transition focus:bg-slate-100"
+    />
   )
 }

@@ -65,6 +65,11 @@ export default function App() {
       ),
     )
 
+  const setQty = (id, qty) =>
+    setBasket((prev) =>
+      prev.map((it) => (it.product.id === id ? { ...it, quantity: qty } : it)),
+    )
+
   const remove = (id) => setBasket((prev) => prev.filter((it) => it.product.id !== id))
   const clear = () => setBasket([])
 
@@ -146,6 +151,7 @@ export default function App() {
           onCityChange={setCity}
           onInc={inc}
           onDec={dec}
+          onSetQty={setQty}
           onRemove={remove}
           onClear={clear}
           onCompare={handleCompare}
