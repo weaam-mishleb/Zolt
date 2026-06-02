@@ -27,14 +27,19 @@ Zolt/
 │       ├── config.py       # הגדרות (.env)
 │       ├── db.py           # engine + connection pool (SQLAlchemy)
 │       ├── models.py       # ORM models (stores/products/prices)
-│       ├── schemas.py      # Pydantic responses
-│       ├── routers/        # products, stores
-│       └── services/       # search service
+│       ├── schemas.py      # Pydantic requests/responses
+│       ├── security.py     # bcrypt + JWT (admin auth)
+│       ├── scheduler.py    # APScheduler — ETL שבועי (ראשון 03:00)
+│       ├── routers/        # products, stores, basket, admin
+│       └── services/       # search + comparison
 ├── etl/
 │   ├── config.py           # נתיבים, רשתות, גדלי batch, עמודות forward-fill
 │   ├── normalize.py        # ניקוי/נרמול שורות (ברקוד, מחיר, קוד חנות)
 │   ├── loader.py           # batch upsert (INSERT ... ON DUPLICATE KEY UPDATE)
-│   └── run.py              # CLI: streaming + תזמור (תומך ‎--dry-run‎)
+│   ├── run.py              # CLI: streaming + תזמור (תומך ‎--dry-run‎)
+│   ├── refresh.py          # הורדה מ-Kaggle → ETL (ל-Scheduler)
+│   └── downloaders/        # kaggle_download.py
+├── secrets/                # kaggle.json (מוחרג מ-git)
 └── archive/                # ה-Kaggle dataset המקומי (לא נכנס ל-git)
 ```
 
@@ -71,7 +76,20 @@ uvicorn backend.app.main:app --reload      # http://127.0.0.1:8000  ·  docs: /d
 - `POST /basket/compare` — השוואת סל: מקבל עיר + מערך `{product_id, quantity}`, מחזיר
   לכל סניף את `Σ(מחיר×כמות)`, ממוין עולה. סניפים שלמים מתחרים על המקום הראשון (`rank`),
   וסניפים עם פריט חסר מוצגים אך מסומנים (`is_complete=false`, `missing_product_ids`).
+- `POST /admin/login` — התחברות אדמין (bcrypt) → מחזיר JWT בתוקף 24 שעות.
+- `GET /admin/me`, `GET /admin/scheduler`, `POST /admin/etl/refresh` — מוגנים ב-JWT
+  (`Authorization: Bearer <token>`); סטטוס המתזמן והפעלת ETL ידנית.
 - `GET /health` — בדיקת תקינות כולל חיבור ל-DB.
+
+### Admin auth + תזמון ETL אוטומטי
+
+- **התחברות**: `POST /admin/login` עם `{username, password}` → JWT (HS256, 24h). שם המשתמש
+  וה-hash (bcrypt) נטענים מ-`.env` (`ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`). יצירת hash:
+  `python -m backend.app.security 'הסיסמה'`.
+- **מתזמן**: ב-startup ה-app מפעיל `APScheduler` עם job שבועי — **כל יום ראשון 03:00** —
+  שמוריד את הדאטהסט מ-Kaggle (`erlichsefi/israeli-supermarkets-data`), מחלץ ל-`archive/`,
+  ומריץ את ה-ETL (שלב 3). מפתח ה-API ב-`secrets/kaggle.json` (מוחרג מ-git;
+  `KAGGLE_CONFIG_DIR` מוגדר אוטומטית). אפשר להפעיל ידנית עם `POST /admin/etl/refresh`.
 
 ### ETL (טעינת הדאטה)
 

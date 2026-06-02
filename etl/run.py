@@ -224,6 +224,30 @@ def run(args: argparse.Namespace) -> None:
         print("  (dry-run — nothing written to the database)")
 
 
+def run_pipeline(
+    *,
+    data_dir=None,
+    chains: list[str] | None = None,
+    full: bool = False,
+    dry_run: bool = False,
+    chunksize: int = CHUNK_SIZE,
+    batch_size: int = BATCH_SIZE,
+    limit_rows: int | None = None,
+) -> None:
+    """Programmatic entry point (used by the scheduler / admin trigger)."""
+    run(
+        argparse.Namespace(
+            data_dir=str(data_dir or DEFAULT_DATA_DIR),
+            chains=chains,
+            full=full,
+            dry_run=dry_run,
+            chunksize=chunksize,
+            batch_size=batch_size,
+            limit_rows=limit_rows,
+        )
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Zolt local ETL pipeline")
     p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="folder with the CSV files")

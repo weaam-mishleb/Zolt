@@ -78,3 +78,15 @@ class BasketCompareResponse(BaseModel):
     complete_store_count: int
     winner_store_id: int | None = None
     stores: list[StoreComparison]
+
+
+# ── Admin auth ───────────────────────────────────────────────────
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int  # seconds until expiry

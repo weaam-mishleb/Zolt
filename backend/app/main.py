@@ -1,20 +1,37 @@
 """Zolt FastAPI application entry point."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from . import scheduler
 from .config import settings
 from .db import get_db
-from .routers import basket, products, stores
+from .routers import admin, basket, products, stores
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the weekly Kaggle-ETL scheduler on boot (registers the cron job;
+    # it does not download anything until the trigger fires).
+    if settings.scheduler_enabled:
+        scheduler.start_scheduler()
+    try:
+        yield
+    finally:
+        scheduler.shutdown_scheduler()
+
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="Compare supermarket basket prices across Shufersal, Rami Levy and Osher Ad.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -28,6 +45,7 @@ app.add_middleware(
 app.include_router(products.router)
 app.include_router(stores.router)
 app.include_router(basket.router)
+app.include_router(admin.router)
 
 
 @app.get("/", tags=["meta"], summary="Service info")

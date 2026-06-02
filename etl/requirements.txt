@@ -3,3 +3,4 @@ pandas>=2.2
 SQLAlchemy>=2.0
 PyMySQL>=1.1
 pydantic-settings>=2.3
+kaggle>=1.6        # automated dataset download (scheduler)
