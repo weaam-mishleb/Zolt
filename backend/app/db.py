@@ -10,7 +10,9 @@ from .config import settings
 
 # A single engine for the process. QueuePool keeps `db_pool_size` live
 # connections, opening up to `db_max_overflow` extra under load.
-# `pool_pre_ping` transparently replaces connections dropped by MySQL.
+# `pool_pre_ping` transparently replaces connections dropped by MySQL while idle;
+# `pool_recycle` proactively retires stale ones; `connect_timeout` tolerates a
+# slow/flaky WAN to a managed cloud DB.
 engine = create_engine(
     settings.database_url,
     pool_size=settings.db_pool_size,
@@ -18,6 +20,7 @@ engine = create_engine(
     pool_recycle=settings.db_pool_recycle,
     pool_timeout=settings.db_pool_timeout,
     pool_pre_ping=True,
+    connect_args={"connect_timeout": settings.db_connect_timeout},
     future=True,
 )
 

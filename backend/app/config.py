@@ -33,8 +33,9 @@ class Settings(BaseSettings):
     # Connection-pool tuning (SQLAlchemy QueuePool)
     db_pool_size: int = 10
     db_max_overflow: int = 20
-    db_pool_recycle: int = 1800  # seconds; recycle before MySQL wait_timeout
+    db_pool_recycle: int = 3600  # seconds; recycle stale conns (cloud DBs drop idle ones)
     db_pool_timeout: int = 30
+    db_connect_timeout: int = 30  # seconds; PyMySQL connect_args (slow/flaky WAN)
 
     # ── API / CORS ───────────────────────────────────────────
     app_name: str = "Zolt API"
