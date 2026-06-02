@@ -1,0 +1,7 @@
+# Zolt backend — Python dependencies
+fastapi>=0.111
+uvicorn[standard]>=0.30
+SQLAlchemy>=2.0
+PyMySQL>=1.1
+pydantic>=2.7
+pydantic-settings>=2.3

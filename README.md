@@ -20,6 +20,16 @@ Zolt/
 ├── db/
 │   └── init/
 │       └── 01_schema.sql   # stores · products · prices (נטען אוטומטית באתחול)
+├── backend/
+│   ├── requirements.txt
+│   └── app/
+│       ├── main.py         # FastAPI app + /health
+│       ├── config.py       # הגדרות (.env)
+│       ├── db.py           # engine + connection pool (SQLAlchemy)
+│       ├── models.py       # ORM models (stores/products/prices)
+│       ├── schemas.py      # Pydantic responses
+│       ├── routers/        # products, stores
+│       └── services/       # search service
 └── archive/                # ה-Kaggle dataset המקומי (לא נכנס ל-git)
 ```
 
@@ -40,6 +50,20 @@ Zolt/
 cp .env.example .env      # התאמת סיסמאות לפי הצורך
 docker compose up -d      # מרים MySQL ומריץ את db/init/01_schema.sql אוטומטית
 ```
+
+### Backend (FastAPI)
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+uvicorn backend.app.main:app --reload      # http://127.0.0.1:8000  ·  docs: /docs
+```
+
+נקודות קצה:
+- `GET /products/search?q=...&limit=...` — חיפוש מוצרים / אוטו-קומפליט (FULLTEXT + fallback ל-LIKE).
+- `GET /stores?city=...&chain=...` — רשימת סניפים מסוננת לפי עיר/רשת.
+- `GET /stores/cities` — רשימת ערים (לתפריט הסינון בצד הלקוח).
+- `GET /health` — בדיקת תקינות כולל חיבור ל-DB.
 
 מקור הנתונים: ה-Kaggle dataset ‏"israeli-supermarkets-data" (קבצי CSV/JSON בפורמט "מחירים שקופים")
 שכבר חולץ מקומית לתיקיית `archive/`.
