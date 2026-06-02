@@ -15,6 +15,7 @@ Ranking rule (important):
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import bindparam, text
@@ -23,10 +24,72 @@ from sqlalchemy.orm import Session
 _TWO_PLACES = Decimal("0.01")
 _NAME_WS = re.compile(r"\s+")
 
+# Characters that are operators in MySQL FULLTEXT BOOLEAN MODE — stripped from tokens.
+_FT_OPERATORS = re.compile(r'[+\-><()~*"@]')
+# Pure numbers / sizes / percentages — not "prominent".
+_NUMERIC = re.compile(r"^[0-9]+([.,][0-9]+)?%?$")
+# Size / packaging / unit words to skip when picking prominent words.
+_STOP_TOKENS = {
+    # units / sizes / packaging
+    "ליטר", "ל", "מל", "מיליליטר", "גרם", "גר", "ג", "קג", "קילו", "קילוגרם",
+    "יחידה", "יח", "יחי", "מארז", "שישיה", "שישייה", "אריזה", "אריזת", "זוג",
+    "חבילה", "בקבוק", "פחית", "קרטון", "ק", "מ", "כ",
+    # common Hebrew function words
+    "על", "של", "עם", "או", "גם", "את", "אל",
+}
+# Cap matches per basket item so a generic word can't blow up the price query.
+_MATCH_CAP = 80
+
 
 def _norm_name(name: str | None) -> str:
     """Trim and collapse inner whitespace so the same item matches by name."""
     return _NAME_WS.sub(" ", (name or "").strip())
+
+
+def prominent_tokens(name: str | None, limit: int = 3) -> list[str]:
+    """The first few brand/product words of a name (skip numbers/sizes/units).
+
+    'קוקה קולה שישיה 1.5 ליטר' → ['קוקה', 'קולה']
+    """
+    out: list[str] = []
+    for raw in re.split(r"[\s\-/,]+", _norm_name(name)):
+        word = _FT_OPERATORS.sub("", raw).strip("'\"").strip()
+        if len(word) < 2 or _NUMERIC.match(word) or word in _STOP_TOKENS:
+            continue
+        out.append(word)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _match_product_ids(db: Session, tokens: list[str]) -> list[int]:
+    """Product ids whose name overlaps the given prominent tokens.
+
+    Primary: FULLTEXT boolean search requiring each token as a prefix.
+    Fallback: LIKE on the first token (covers tokens below the FULLTEXT
+    minimum length, or when boolean search finds nothing).
+    """
+    if not tokens:
+        return []
+    expr = " ".join(f"+{t}*" for t in tokens)
+    rows = db.execute(
+        text(
+            """
+            SELECT id FROM products
+            WHERE MATCH(name) AGAINST (:expr IN BOOLEAN MODE)
+            LIMIT :cap
+            """
+        ),
+        {"expr": expr, "cap": _MATCH_CAP},
+    ).all()
+    if rows:
+        return [r[0] for r in rows]
+
+    rows = db.execute(
+        text("SELECT id FROM products WHERE name LIKE :like LIMIT :cap"),
+        {"like": f"%{tokens[0]}%", "cap": _MATCH_CAP},
+    ).all()
+    return [r[0] for r in rows]
 
 
 def _money(value: Decimal | None) -> float | None:
@@ -142,16 +205,15 @@ def build_comparison(
 
 
 def compare_basket(db: Session, city: str, items: list) -> dict:
-    """Compare a basket by PRODUCT NAME, not strictly by barcode.
+    """Compare a basket with fuzzy, text-based product matching.
 
-    Chains use different barcodes/PLUs for the same item, so matching only the
-    submitted product_ids drops competing chains. Instead:
-      1. look up the names of the submitted product_ids,
-      2. normalize them (trim + collapse whitespace),
-      3. find every product in the DB that shares those names,
-      4. for each store take the cheapest barcode per name, and
-      5. group/rank by name (each name keeps one representative id so the
-         existing response shape — and the UI — stay unchanged).
+    Because the chains use different barcodes AND different name wordings for the
+    same item, both barcode and exact-name matching drop competing chains. For
+    each basket item we instead take its prominent words and FULLTEXT-match every
+    overlapping product in the DB, so 'קוקה קולה שישיה' also reaches Rami Levy's
+    'קוקה קולה 1.5'. Each basket item keeps a representative id, and per store we
+    take the cheapest matching product to represent that item (so the response
+    shape — and the UI — stay unchanged).
     """
     empty = {
         "city": city,
@@ -163,67 +225,46 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
         "stores": [],
     }
 
-    submitted_ids = list({it.product_id for it in items})
-    if not submitted_ids:
-        return empty
-
-    # 1. names (+ barcode for display) of the submitted products
-    sub_rows = db.execute(
-        text("SELECT id, name, barcode FROM products WHERE id IN :ids").bindparams(
-            bindparam("ids", expanding=True)
-        ),
-        {"ids": submitted_ids},
-    ).mappings().all()
-    id_info = {r["id"]: r for r in sub_rows}
-
-    # 2. one representative id + summed quantity per normalized name
-    repr_for_name: dict[str, int] = {}
+    # 1. one basket line per distinct submitted id; sum quantities for repeats
     qty_by_repr: dict[int, Decimal] = {}
-    products_meta: dict[int, dict] = {}
     for it in items:
-        info = id_info.get(it.product_id)
-        if info is None:
-            continue
-        norm = _norm_name(info["name"])
-        if not norm:
-            continue
-        rep = repr_for_name.get(norm)
-        if rep is None:
-            rep = it.product_id  # first submitted id for this name represents it
-            repr_for_name[norm] = rep
-            products_meta[rep] = {
-                "id": rep,
-                "name": (info["name"] or "").strip(),
-                "barcode": info["barcode"],
-            }
-            qty_by_repr[rep] = Decimal("0")
-        qty_by_repr[rep] += Decimal(str(it.quantity))
-
+        qty_by_repr[it.product_id] = qty_by_repr.get(it.product_id, Decimal("0")) + Decimal(
+            str(it.quantity)
+        )
     repr_ids = list(qty_by_repr)
     if not repr_ids:
         return empty
 
-    names = list(repr_for_name)
-
-    # 3. every product (any barcode) whose normalized name matches → its rep id
-    match_rows = db.execute(
-        text(
-            """
-            SELECT id, name FROM products
-            WHERE REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' ') IN :names
-            """
-        ).bindparams(bindparam("names", expanding=True)),
-        {"names": names},
+    # 2. names (+ barcode for display) of the submitted products
+    sub_rows = db.execute(
+        text("SELECT id, name, barcode FROM products WHERE id IN :ids").bindparams(
+            bindparam("ids", expanding=True)
+        ),
+        {"ids": repr_ids},
     ).mappings().all()
-    pid_to_repr: dict[int, int] = {}
-    for r in match_rows:
-        rep = repr_for_name.get(_norm_name(r["name"]))
-        if rep is not None:
-            pid_to_repr[r["id"]] = rep
-    for rep in repr_ids:  # always include the submitted ids themselves
-        pid_to_repr.setdefault(rep, rep)
+    id_info = {r["id"]: r for r in sub_rows}
 
-    # 4. prices for all those barcodes in the requested city
+    repr_ids = [rid for rid in repr_ids if rid in id_info]
+    if not repr_ids:
+        return empty
+    products_meta = {
+        rid: {
+            "id": rid,
+            "name": (id_info[rid]["name"] or "").strip(),
+            "barcode": id_info[rid]["barcode"],
+        }
+        for rid in repr_ids
+    }
+
+    # 3. fuzzy-match each basket item to overlapping products (a product may map
+    #    to several basket lines — emitted once per line later).
+    pid_to_reprs: dict[int, set[int]] = defaultdict(set)
+    for rid in repr_ids:
+        pid_to_reprs[rid].add(rid)  # the item itself is always a candidate
+        for pid in _match_product_ids(db, prominent_tokens(id_info[rid]["name"])):
+            pid_to_reprs[pid].add(rid)
+
+    # 4. prices for every matched product in the requested city
     price_rows = db.execute(
         text(
             """
@@ -234,15 +275,16 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
             WHERE s.city = :city AND pr.product_id IN :pids
             """
         ).bindparams(bindparam("pids", expanding=True)),
-        {"city": city, "pids": list(pid_to_repr)},
+        {"city": city, "pids": list(pid_to_reprs)},
     ).mappings().all()
 
-    # 5. collapse every barcode onto its name's representative id — build_comparison
-    #    then keeps the MIN price per (store, name) = cheapest barcode per store.
-    remapped = []
+    # 5. fan each price row out to the basket line(s) it matched; build_comparison
+    #    then keeps the MIN price per (store, item) = cheapest matching product.
+    remapped: list[dict] = []
     for r in price_rows:
-        row = dict(r)
-        row["product_id"] = pid_to_repr[r["product_id"]]
-        remapped.append(row)
+        for rep in pid_to_reprs.get(r["product_id"], ()):
+            row = dict(r)
+            row["product_id"] = rep
+            remapped.append(row)
 
     return build_comparison(city, repr_ids, qty_by_repr, products_meta, remapped)

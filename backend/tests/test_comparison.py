@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from backend.app.services.comparison import build_comparison
+from backend.app.services.comparison import build_comparison, prominent_tokens
 
 CITY = "תל אביב"
 PRODUCTS = {
@@ -101,6 +101,14 @@ def test_cheapest_barcode_per_name_wins_in_store():
     s = res["stores"][0]
     assert s["total"] == 7.5
     assert s["items"][0]["unit_price"] == 7.5
+
+
+def test_prominent_tokens_skips_sizes_units_and_stopwords():
+    assert prominent_tokens("קוקה קולה שישיה 1.5 ליטר") == ["קוקה", "קולה"]
+    assert prominent_tokens("חלב תנובה 3% 1 ליטר") == ["חלב", "תנובה"]
+    assert prominent_tokens("500 גרם") == []                 # only size/unit
+    assert prominent_tokens("סוכריות על מקל") == ["סוכריות", "מקל"]  # 'על' dropped
+    assert prominent_tokens("אבא אמא ילד בית גן") == ["אבא", "אמא", "ילד"]  # capped at 3
 
 
 def test_quantity_multiplies_line_total():
