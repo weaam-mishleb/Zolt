@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import Header from './components/Header.jsx'
 import SearchBar from './components/SearchBar.jsx'
 import BasketSidebar from './components/BasketSidebar.jsx'
-import { getCities } from './api'
+import ComparisonTable from './components/ComparisonTable.jsx'
+import { compareBasket, getCities } from './api'
 
 const STORAGE_KEY = 'zolt.basket'
 
@@ -17,7 +18,10 @@ export default function App() {
   })
   const [cities, setCities] = useState([])
   const [city, setCity] = useState('')
-  const [notice, setNotice] = useState('')
+
+  const [comparison, setComparison] = useState(null)
+  const [comparing, setComparing] = useState(false)
+  const [compareError, setCompareError] = useState('')
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(basket))
@@ -28,6 +32,12 @@ export default function App() {
       .then(setCities)
       .catch(() => setCities([]))
   }, [])
+
+  // A comparison is tied to a specific basket + city — drop it when either changes.
+  useEffect(() => {
+    setComparison(null)
+    setCompareError('')
+  }, [basket, city])
 
   function addProduct(product) {
     setBasket((prev) => {
@@ -60,10 +70,20 @@ export default function App() {
   const remove = (id) => setBasket((prev) => prev.filter((it) => it.product.id !== id))
   const clear = () => setBasket([])
 
-  function handleCompare() {
-    // The actual POST /basket/compare call + results table arrive in Step 7.
-    setNotice('מנוע ההשוואה יחובר בשלב הבא 🔧')
-    setTimeout(() => setNotice(''), 3000)
+  async function handleCompare() {
+    if (!basket.length || !city) return
+    setComparing(true)
+    setCompareError('')
+    setComparison(null)
+    try {
+      const items = basket.map((it) => ({ product_id: it.product.id, quantity: it.quantity }))
+      const result = await compareBasket(city, items)
+      setComparison(result)
+    } catch {
+      setCompareError('ההשוואה נכשלה — ודאו שהשרת פעיל ונסו שוב.')
+    } finally {
+      setComparing(false)
+    }
   }
 
   return (
@@ -83,16 +103,40 @@ export default function App() {
 
           <SearchBar onAdd={addProduct} />
 
-          {basket.length === 0 ? (
-            <div className="mt-10 rounded-2xl border border-dashed border-slate-200 bg-white/60 p-10 text-center">
-              <div className="text-4xl">🛒</div>
-              <p className="mt-3 font-medium text-slate-500">
-                התחילו בהקלדת שם מוצר בתיבת החיפוש
-              </p>
+          {/* Results area */}
+          {comparing && (
+            <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">
+              משווים מחירים בין הסניפים… ⏳
             </div>
-          ) : (
-            <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-400">
-              אזור תוצאות ההשוואה — ייבנה בשלב 7
+          )}
+
+          {compareError && !comparing && (
+            <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700">
+              {compareError}
+            </div>
+          )}
+
+          {comparison && !comparing && <ComparisonTable result={comparison} />}
+
+          {!comparison && !comparing && !compareError && (
+            <div className="mt-10 rounded-2xl border border-dashed border-slate-200 bg-white/60 p-10 text-center">
+              {basket.length === 0 ? (
+                <>
+                  <div className="text-4xl">🛒</div>
+                  <p className="mt-3 font-medium text-slate-500">
+                    התחילו בהקלדת שם מוצר בתיבת החיפוש
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-4xl">⚖️</div>
+                  <p className="mt-3 font-medium text-slate-500">
+                    {city
+                      ? 'לחצו "השוו מחירים" כדי לראות את הטבלה'
+                      : 'בחרו עיר בסל ולחצו "השוו מחירים"'}
+                  </p>
+                </>
+              )}
             </div>
           )}
         </section>
@@ -107,8 +151,7 @@ export default function App() {
           onRemove={remove}
           onClear={clear}
           onCompare={handleCompare}
-          comparing={false}
-          notice={notice}
+          comparing={comparing}
         />
       </main>
     </div>
