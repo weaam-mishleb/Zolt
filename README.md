@@ -85,14 +85,14 @@ uvicorn backend.app.main:app --reload      # http://127.0.0.1:8000  ·  docs: /d
 - `POST /basket/compare` — השוואת סל: מקבל עיר + מערך `{product_id, quantity}`, מחזיר
   לכל סניף את `Σ(מחיר×כמות)`, ממוין עולה. סניפים שלמים מתחרים על המקום הראשון (`rank`),
   וסניפים עם פריט חסר מוצגים אך מסומנים (`is_complete=false`, `missing_product_ids`).
-- `POST /admin/login` — התחברות אדמין (bcrypt) → מחזיר JWT בתוקף 24 שעות.
+- `POST /admin/login` — התחברות אדמין (bcrypt) → מחזיר JWT בתוקף שעה.
 - `GET /admin/me`, `GET /admin/scheduler`, `POST /admin/etl/refresh` — מוגנים ב-JWT
   (`Authorization: Bearer <token>`); סטטוס המתזמן והפעלת ETL ידנית.
 - `GET /health` — בדיקת תקינות כולל חיבור ל-DB.
 
 ### Admin auth + תזמון ETL אוטומטי
 
-- **התחברות**: `POST /admin/login` עם `{username, password}` → JWT (HS256, 24h). שם המשתמש
+- **התחברות**: `POST /admin/login` עם `{username, password}` → JWT (HS256, שעה). שם המשתמש
   וה-hash (bcrypt) נטענים מ-`.env` (`ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`). יצירת hash:
   `python -m backend.app.security 'הסיסמה'`.
 - **מתזמן**: ב-startup ה-app מפעיל `APScheduler` עם job שבועי — **כל יום ראשון 03:00** —
@@ -109,8 +109,9 @@ python -m etl.run                  # טעינה בפועל ל-MySQL (snapshot)
 python -m etl.run --full           # שימוש בקטלוג המחירים המלא
 ```
 
-ה-ETL קורא את קבצי ה-CSV המקומיים (פורמט "מחירים שקופים"), עושה streaming ב-chunks
-(חסכוני בזיכרון), עושה **forward-fill** לעמודות הזהות (chain/store) שמופיעות רק בראש כל בלוק,
+ה-ETL קורא את קבצי ה-CSV המקומיים (פורמט "מחירים שקופים"), עושה streaming ב-chunks עם
+מודול `csv` הסטנדרטי (חסכוני בזיכרון — בלי pandas), עושה **forward-fill** לעמודות הזהות
+(chain/store) שמופיעות רק בראש כל בלוק,
 מנרמל קודים (הסרת אפסים מובילים), ומבצע **batch upsert של 1,000** עם
 `INSERT ... ON DUPLICATE KEY UPDATE`. החיבור מחיר→חנות נעשה לפי `(chain_id, store_code)`.
 

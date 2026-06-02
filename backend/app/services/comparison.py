@@ -235,6 +235,7 @@ def build_comparison(
         "complete_store_count": len(complete),
         "shown_store_count": len(shown),      # branches actually returned (≤ limit)
         "winner_store_id": winner_id,
+        "message": None if shown else "No stores in this city",
         "stores": shown,
     }
 
@@ -256,7 +257,9 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
         "products": [],
         "store_count": 0,
         "complete_store_count": 0,
+        "shown_store_count": 0,
         "winner_store_id": None,
+        "message": "No stores in this city",
         "stores": [],
     }
 

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # ── Admin auth (JWT) ─────────────────────────────────────
     jwt_secret: str = "dev-only-change-me-to-a-long-random-secret"
-    jwt_expire_hours: int = 24
+    jwt_expire_hours: int = 1
     admin_username: str = "admin"
     admin_password_hash: str = ""  # bcrypt hash; empty ⇒ login disabled
 

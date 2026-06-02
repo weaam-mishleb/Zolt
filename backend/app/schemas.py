@@ -32,12 +32,16 @@ class StoreOut(BaseModel):
 # ── Basket comparison ────────────────────────────────────────────
 class BasketItemIn(BaseModel):
     product_id: int
-    quantity: float = Field(1, gt=0, description="Units of this product (weighted items may be fractional)")
+    # No gt=0 here — the basket endpoint validates manually and returns HTTP 400
+    # with a clear message (instead of FastAPI's default 422).
+    quantity: float = Field(1, description="Units of this product (weighted items may be fractional)")
 
 
 class BasketCompareRequest(BaseModel):
     city: str = Field(..., min_length=1, description="City whose branches are compared")
-    items: list[BasketItemIn] = Field(..., min_length=1, description="Basket lines")
+    # min_length intentionally omitted — empty baskets are rejected in the router
+    # with HTTP 400 "Basket cannot be empty".
+    items: list[BasketItemIn] = Field(default_factory=list, description="Basket lines")
 
 
 class ProductBrief(BaseModel):
@@ -78,6 +82,7 @@ class BasketCompareResponse(BaseModel):
     complete_store_count: int
     shown_store_count: int = 0        # branches returned after the 10-branch cap
     winner_store_id: int | None = None
+    message: str | None = None        # e.g. "No stores in this city" when empty
     stores: list[StoreComparison]
 
 

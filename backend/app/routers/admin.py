@@ -11,7 +11,7 @@ from ..security import create_access_token, get_current_admin, verify_password
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.post("/login", response_model=TokenResponse, summary="Admin login → JWT (24h)")
+@router.post("/login", response_model=TokenResponse, summary="Admin login → JWT (1h)")
 def login(body: LoginRequest):
     valid = (
         body.username == settings.admin_username
