@@ -91,6 +91,12 @@ _ALIASES_BY_CANON: dict[str, list[str]] = {
     "קרית ביאליק": ["קריית ביאליק"],
     "קרית שמונה": ["קריית שמונה", "קרית שמונא"],
     "מודיעין": ["מודיעין-מכבים-רעות", "מודיעין מכבים רעות", "מודעין"],
+    # Strong de-duping for known spelling/spacing variants (dashes & no-space).
+    # Extra/leading/trailing spaces are already collapsed by _clean().
+    "אור יהודה": ["אוריהודה", "אור-יהודה"],
+    "בת ים": ["בת-ים", "בתים"],
+    "בית שמש": ["בית-שמש", "ביתשמש"],
+    "בני ברק": ["בני-ברק", "בניברק"],
 }
 
 # ── Neighborhood / branch locality → city (for storename fallback) ──────────

@@ -36,3 +36,20 @@ from etl.cities import normalize_city
 )
 def test_normalize_city(raw, store_name, expected):
     assert normalize_city(raw, store_name) == expected
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("אוריהודה", "אור יהודה"),
+        ("אור-יהודה", "אור יהודה"),
+        ("בת-ים", "בת ים"),
+        ("  בת   ים  ", "בת ים"),     # leading/trailing + collapsed inner spaces
+        ("בית-שמש", "בית שמש"),
+        (" בית  שמש ", "בית שמש"),
+        ("בני-ברק", "בני ברק"),
+        ("בני  ברק", "בני ברק"),
+    ],
+)
+def test_city_dedup_variants(raw, expected):
+    assert normalize_city(raw) == expected
