@@ -88,7 +88,9 @@ export default function App() {
       <Header />
 
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-8 lg:grid-cols-3">
-        <section className="lg:col-span-2">
+        {/* min-w-0 lets the wide comparison table scroll inside this grid column
+            instead of overflowing/clipping (grid items default to min-width:auto). */}
+        <section className="min-w-0 lg:col-span-2">
           <div className="mb-6">
             <h2 className="mb-1 text-2xl font-black tracking-tight text-slate-800 sm:text-3xl">
               כמה עולה הסל שלכם?

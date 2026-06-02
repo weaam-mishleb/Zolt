@@ -13,9 +13,11 @@ function itemsByProduct(store) {
 }
 
 // ── per-cell class helpers (per-side border colors avoid clobbering) ──
+// Header cells are sticky to the top (z-10) so the column column stays above
+// body cells during any vertical scroll.
 function thClass(isWinner, incomplete) {
   const base =
-    'min-w-[160px] px-4 py-4 align-top border-b border-b-slate-200 border-l border-l-slate-200/70'
+    'sticky top-0 z-10 min-w-[160px] px-4 py-4 align-top border-b border-b-slate-200 border-l border-l-slate-200/70'
   if (isWinner) return `${base} bg-emerald-100 border-l-emerald-300`
   if (incomplete) return `${base} bg-amber-50`
   return `${base} bg-slate-50`
@@ -35,11 +37,13 @@ function tfClass(isWinner, incomplete) {
   return `${base} bg-slate-50 text-slate-800`
 }
 
-// Pinned-right product column — solid opaque bg + z-20 so it never glitches.
-const STICKY = 'sticky right-0 z-20 border-l-2 border-l-slate-300'
-const stickyHead = `${STICKY} bg-slate-50 px-4 py-4 text-right font-semibold text-slate-600 border-b border-b-slate-200`
-const stickyFoot = `${STICKY} bg-slate-50 px-4 py-4 text-right font-bold text-slate-800`
-const stickyBody = `${STICKY} bg-white px-4 py-4 text-right font-medium text-slate-700 border-b border-b-slate-100 group-hover:bg-slate-50`
+// Pinned-right product column — solid opaque bg so it never glitches.
+// z-index: body/footer cells z-20 (above scrolling data); the top-right corner
+// cell is both row- and column-pinned, so it needs z-30 to sit above all.
+const STICKY_COL = 'sticky right-0 border-l-2 border-l-slate-300'
+const stickyHead = `${STICKY_COL} top-0 z-30 bg-slate-50 px-4 py-4 text-right font-semibold text-slate-600 border-b border-b-slate-200`
+const stickyFoot = `${STICKY_COL} z-20 bg-slate-50 px-4 py-4 text-right font-bold text-slate-800`
+const stickyBody = `${STICKY_COL} z-20 bg-white px-4 py-4 text-right font-medium text-slate-700 border-b border-b-slate-100 group-hover:bg-slate-50`
 
 export default function ComparisonTable({ result }) {
   const { products, stores, winner_store_id, complete_store_count, store_count, shown_store_count } =
@@ -90,11 +94,13 @@ export default function ComparisonTable({ result }) {
         · {complete_store_count} מחזיקים את כל המוצרים
       </p>
 
-      {/* Products × stores matrix — rounded frame + inner horizontal scroll */}
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
-        <div className="overflow-x-auto">
-          <table className="w-full border-separate border-spacing-0 text-sm">
-            <thead>
+      {/* Products × stores matrix.
+          The single wrapper is the ONLY scroll/clip context: w-full + overflow-x-auto.
+          The table is min-w-max so it grows past the screen and scrolls natively
+          (instead of being squashed/clipped on the left in RTL). */}
+      <div className="w-full overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
+        <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
+          <thead>
               <tr>
                 <th className={stickyHead}>מוצר</th>
                 {stores.map((s) => {
@@ -163,7 +169,6 @@ export default function ComparisonTable({ result }) {
               </tr>
             </tfoot>
           </table>
-        </div>
       </div>
 
       {/* Explicit list of which products are missing where */}
