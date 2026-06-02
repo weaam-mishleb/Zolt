@@ -12,38 +12,37 @@ function itemsByProduct(store) {
   return map
 }
 
-// ── per-cell class helpers (per-side border colors avoid clobbering) ──
-// Header cells are sticky to the top (z-10) so the column column stays above
-// body cells during any vertical scroll.
+// ── Sleek data-table cells: only subtle horizontal separators; the winner
+//    column is tinted green for grouping (no heavy grid lines). ──
 function thClass(isWinner, incomplete) {
-  const base =
-    'sticky top-0 z-10 min-w-[160px] px-4 py-4 align-top border-b border-b-slate-200 border-l border-l-slate-200/70'
-  if (isWinner) return `${base} bg-emerald-100 border-l-emerald-300`
-  if (incomplete) return `${base} bg-amber-50`
-  return `${base} bg-slate-50`
+  const base = 'sticky top-0 z-10 min-w-[160px] px-5 py-4 align-top border-b border-slate-200/80'
+  if (isWinner) return `${base} bg-emerald-50`
+  if (incomplete) return `${base} bg-amber-50/60`
+  return `${base} bg-white/95 backdrop-blur`
 }
 
 function tdClass(isWinner) {
-  const base = 'px-4 py-4 text-center tabular-nums border-b border-b-slate-100 border-l border-l-slate-100'
+  const base = 'px-5 py-3.5 text-center tabular-nums border-b border-slate-100 transition-colors'
   return isWinner
-    ? `${base} bg-emerald-50 font-semibold text-emerald-800 border-l-emerald-200 group-hover:bg-emerald-100`
-    : `${base} bg-white text-slate-700 group-hover:bg-slate-50`
+    ? `${base} bg-emerald-50/70 font-semibold text-emerald-800 group-hover:bg-emerald-100/70`
+    : `${base} bg-white text-slate-600 group-hover:bg-slate-50/70`
 }
 
 function tfClass(isWinner, incomplete) {
-  const base = 'px-4 py-4 text-center text-base font-black tabular-nums border-l border-l-slate-200/70'
-  if (isWinner) return `${base} bg-emerald-100 text-emerald-800 border-l-emerald-300`
-  if (incomplete) return `${base} bg-amber-50 text-amber-800`
-  return `${base} bg-slate-50 text-slate-800`
+  const base = 'px-5 py-4 text-center text-base font-black tabular-nums border-t border-slate-200/80'
+  if (isWinner) return `${base} bg-emerald-100/70 text-emerald-800`
+  if (incomplete) return `${base} bg-amber-50/60 text-amber-800`
+  return `${base} bg-white text-slate-800`
 }
 
-// Pinned-right product column — solid opaque bg so it never glitches.
-// z-index: body/footer cells z-20 (above scrolling data); the top-right corner
-// cell is both row- and column-pinned, so it needs z-30 to sit above all.
-const STICKY_COL = 'sticky right-0 border-l-2 border-l-slate-300'
-const stickyHead = `${STICKY_COL} top-0 z-30 bg-slate-50 px-4 py-4 text-right font-semibold text-slate-600 border-b border-b-slate-200`
-const stickyFoot = `${STICKY_COL} z-20 bg-slate-50 px-4 py-4 text-right font-bold text-slate-800`
-const stickyBody = `${STICKY_COL} z-20 bg-white px-4 py-4 text-right font-medium text-slate-700 border-b border-b-slate-100 group-hover:bg-slate-50`
+// Pinned-right product column.
+// THE WEBKIT RTL FIX: solid opaque bg + sticky on the cell itself + transform-gpu
+// (will-change-transform) to force each pinned cell onto its own GPU layer, so
+// Safari/WebKit never drops it while dragging the horizontal scrollbar.
+const STICKY = 'sticky right-0 transform-gpu will-change-transform border-l border-slate-200/80'
+const stickyHead = `${STICKY} top-0 z-30 bg-white px-5 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-200/80`
+const stickyBody = `${STICKY} z-20 bg-white px-5 py-3.5 text-right font-medium text-slate-700 border-b border-slate-100 group-hover:bg-slate-50/70`
+const stickyFoot = `${STICKY} z-20 bg-white px-5 py-4 text-right font-bold text-slate-800 border-t border-slate-200/80`
 
 export default function ComparisonTable({ result }) {
   const { products, stores, winner_store_id, complete_store_count, store_count, shown_store_count } =
@@ -51,7 +50,7 @@ export default function ComparisonTable({ result }) {
 
   if (!stores.length) {
     return (
-      <div className="animate-in mt-8 rounded-3xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
+      <div className="animate-in mt-8 rounded-3xl border border-slate-200/70 bg-white p-10 text-center text-slate-500 shadow-sm ring-1 ring-slate-900/5">
         לא נמצאו סניפים בעיר זו שמחזיקים את מוצרי הסל. נסו עיר אחרת. 🏙️
       </div>
     )
@@ -64,12 +63,12 @@ export default function ComparisonTable({ result }) {
   const shown = shown_store_count || stores.length
 
   return (
-    <div className="animate-in mt-8 space-y-4">
+    <div className="animate-in mt-8 space-y-5">
       {/* Winner / no-winner banner */}
       {winner ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-emerald-200 bg-gradient-to-l from-emerald-50 to-teal-50 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-emerald-100 bg-gradient-to-l from-emerald-50 to-teal-50/50 p-5 shadow-sm ring-1 ring-emerald-600/5">
           <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm ring-1 ring-emerald-600/10">
               🏆
             </span>
             <div>
@@ -94,86 +93,84 @@ export default function ComparisonTable({ result }) {
         · {complete_store_count} מחזיקים את כל המוצרים
       </p>
 
-      {/* Products × stores matrix.
-          The single wrapper is the ONLY scroll/clip context: w-full + overflow-x-auto.
-          The table is min-w-max so it grows past the screen and scrolls natively
-          (instead of being squashed/clipped on the left in RTL). */}
-      <div className="w-full overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
+      {/* Single scroll context (w-full + overflow-x-auto). Table is min-w-max so it
+          grows past the viewport and scrolls natively in RTL. */}
+      <div className="w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5">
         <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
           <thead>
-              <tr>
-                <th className={stickyHead}>מוצר</th>
-                {stores.map((s) => {
-                  const isWinner = s.store_id === winner_store_id
-                  return (
-                    <th key={s.store_id} className={thClass(isWinner, !s.is_complete)}>
-                      <div className="flex flex-col items-center gap-1">
-                        {isWinner && (
-                          <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
-                            🏆 הזול ביותר
-                          </span>
-                        )}
-                        {!s.is_complete && (
-                          <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">
-                            ⚠ חסרים {s.missing_count}
-                          </span>
-                        )}
-                        <span className="font-bold text-slate-800">{s.chain_name}</span>
-                        <span className="text-xs text-slate-500">{storeLabel(s)}</span>
-                        {s.rank && <span className="text-[11px] text-slate-400">מקום {s.rank}</span>}
-                      </div>
-                    </th>
-                  )
-                })}
-              </tr>
-            </thead>
+            <tr>
+              <th className={stickyHead}>מוצר</th>
+              {stores.map((s) => {
+                const isWinner = s.store_id === winner_store_id
+                return (
+                  <th key={s.store_id} className={thClass(isWinner, !s.is_complete)}>
+                    <div className="flex flex-col items-center gap-1">
+                      {isWinner && (
+                        <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
+                          🏆 הזול ביותר
+                        </span>
+                      )}
+                      {!s.is_complete && (
+                        <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                          ⚠ חסרים {s.missing_count}
+                        </span>
+                      )}
+                      <span className="font-bold text-slate-800">{s.chain_name}</span>
+                      <span className="text-xs text-slate-400">{storeLabel(s)}</span>
+                      {s.rank && <span className="text-[11px] text-slate-300">מקום {s.rank}</span>}
+                    </div>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
 
-            <tbody>
-              {products.map((p) => (
-                <tr key={p.id} className="group">
-                  <td className={stickyBody}>{p.name || p.barcode}</td>
-                  {stores.map((s) => {
-                    const it = maps[s.store_id][p.id]
-                    const isWinner = s.store_id === winner_store_id
-                    if (!it || !it.found) {
-                      return (
-                        <td key={s.store_id} className={tdClass(isWinner)}>
-                          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
-                            חסר
-                          </span>
-                        </td>
-                      )
-                    }
+          <tbody>
+            {products.map((p) => (
+              <tr key={p.id} className="group">
+                <td className={stickyBody}>{p.name || p.barcode}</td>
+                {stores.map((s) => {
+                  const it = maps[s.store_id][p.id]
+                  const isWinner = s.store_id === winner_store_id
+                  if (!it || !it.found) {
                     return (
                       <td key={s.store_id} className={tdClass(isWinner)}>
-                        {ils.format(it.line_total)}
+                        <span className="rounded-md bg-amber-100/80 px-2 py-1 text-xs font-semibold text-amber-700">
+                          חסר
+                        </span>
                       </td>
                     )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-
-            <tfoot>
-              <tr>
-                <td className={stickyFoot}>סה״כ</td>
-                {stores.map((s) => {
-                  const isWinner = s.store_id === winner_store_id
+                  }
                   return (
-                    <td key={s.store_id} className={tfClass(isWinner, !s.is_complete)}>
-                      {ils.format(s.total)}
-                      {!s.is_complete && <span className="block text-[11px] font-medium">חלקי</span>}
+                    <td key={s.store_id} className={tdClass(isWinner)}>
+                      {ils.format(it.line_total)}
                     </td>
                   )
                 })}
               </tr>
-            </tfoot>
-          </table>
+            ))}
+          </tbody>
+
+          <tfoot>
+            <tr>
+              <td className={stickyFoot}>סה״כ</td>
+              {stores.map((s) => {
+                const isWinner = s.store_id === winner_store_id
+                return (
+                  <td key={s.store_id} className={tfClass(isWinner, !s.is_complete)}>
+                    {ils.format(s.total)}
+                    {!s.is_complete && <span className="block text-[11px] font-medium">חלקי</span>}
+                  </td>
+                )
+              })}
+            </tr>
+          </tfoot>
+        </table>
       </div>
 
       {/* Explicit list of which products are missing where */}
       {incompleteStores.length > 0 && (
-        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+        <div className="rounded-3xl border border-amber-200/80 bg-amber-50/70 p-4 shadow-sm">
           <p className="mb-2 font-semibold text-amber-800">מוצרים חסרים בסניפים</p>
           <ul className="space-y-1 text-sm text-amber-700">
             {incompleteStores.map((s) => (

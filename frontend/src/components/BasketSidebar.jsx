@@ -16,7 +16,7 @@ export default function BasketSidebar({
 
   return (
     <aside className="lg:sticky lg:top-24 lg:self-start">
-      <div className="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-xl shadow-slate-900/5">
+      <div className="rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800">
             <span>🛒</span> הסל שלי
@@ -41,7 +41,7 @@ export default function BasketSidebar({
             {items.map(({ product, quantity }) => (
               <li
                 key={product.id}
-                className="group flex items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50/60 p-2 transition hover:border-slate-200 hover:bg-slate-50"
+                className="group flex items-center gap-2 rounded-2xl bg-slate-50/70 p-2 ring-1 ring-slate-200/50 transition hover:bg-white hover:shadow-sm hover:ring-slate-200"
               >
                 <button
                   onClick={() => onRemove(product.id)}

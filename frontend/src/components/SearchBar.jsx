@@ -63,7 +63,7 @@ export default function SearchBar({ onAdd }) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => (results.length || error) && setOpen(true)}
           placeholder="חפשו מוצר..."
-          className="w-full rounded-2xl border border-slate-200 bg-white py-4 pr-14 pl-24 text-lg shadow-sm shadow-slate-900/5 outline-none transition focus:border-emerald-400 focus:shadow-lg focus:shadow-emerald-600/10 focus:ring-4 focus:ring-emerald-100"
+          className="w-full rounded-2xl border border-slate-200/80 bg-white py-4 pr-14 pl-24 text-lg shadow-sm outline-none ring-1 ring-slate-900/[0.03] transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
         />
         {loading && (
           <span className="absolute inset-y-0 left-5 flex items-center text-sm text-slate-400">
@@ -73,7 +73,7 @@ export default function SearchBar({ onAdd }) {
       </div>
 
       {open && (results.length > 0 || error) && (
-        <ul className="animate-in absolute z-20 mt-2 max-h-96 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/10">
+        <ul className="animate-in absolute z-20 mt-2 max-h-96 w-full overflow-auto rounded-2xl border border-slate-200/70 bg-white p-2 shadow-xl ring-1 ring-slate-900/5">
           {error && <li className="px-3 py-3 text-center text-sm text-rose-600">{error}</li>}
           {results.map((p) => (
             <li key={p.id}>
