@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from backend.app.services.comparison import build_comparison, prominent_tokens
+from backend.app.services.comparison import build_comparison, prominent_tokens, size_tokens
 
 CITY = "תל אביב"
 PRODUCTS = {
@@ -123,6 +123,15 @@ def test_results_capped_at_10_with_chain_mix():
     # the overall-cheapest (winner) is kept and ranked first
     assert res["winner_store_id"] == 101
     assert res["stores"][0]["store_id"] == 101
+
+
+def test_size_tokens_distinguish_multipack_from_single():
+    # the size signature is what stops a 10-pack from matching a single bag
+    assert size_tokens("מארז במבה 10*25 גרם") == ["10", "25"]
+    assert size_tokens("במבה 80 גרם") == ["80"]
+    assert size_tokens("אבוקדו") == []                 # no numbers (produce)
+    assert size_tokens("חלב 3% 1 ליטר") == []          # single-digit sizes ignored (<2 chars)
+    assert size_tokens("מארז 10*25*50 גרם") == ["10", "25"]  # capped at 2, de-duped
 
 
 def test_prominent_tokens_skips_sizes_units_and_stopwords():

@@ -15,7 +15,6 @@ Ranking rule (important):
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import bindparam, text
@@ -62,16 +61,50 @@ def prominent_tokens(name: str | None, limit: int = 3) -> list[str]:
     return out
 
 
-def _match_product_ids(db: Session, tokens: list[str]) -> list[int]:
-    """Product ids whose name overlaps the given prominent tokens.
+_DIGITS_RE = re.compile(r"\d+")
 
-    Primary: FULLTEXT boolean search requiring each token as a prefix.
-    Fallback: LIKE on the first token (covers tokens below the FULLTEXT
-    minimum length, or when boolean search finds nothing).
-    """
-    if not tokens:
+
+def size_tokens(name: str | None, limit: int = 2) -> list[str]:
+    """Numeric size/quantity tokens (>=2 digits) that distinguish, e.g., a
+    10-pack from an 80g single. 'מארז במבה 10*25 גרם' → ['10', '25']."""
+    out: list[str] = []
+    for n in _DIGITS_RE.findall(name or ""):
+        if len(n) >= 2 and n not in out:  # FULLTEXT min token size is 2
+            out.append(n)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _same_name_ids(db: Session, norm_name: str) -> list[int]:
+    """Product ids whose (trim+collapsed) name equals `norm_name` — the same
+    item sold under different barcodes across chains."""
+    if not norm_name:
         return []
-    expr = " ".join(f"+{t}*" for t in tokens)
+    rows = db.execute(
+        text(
+            """
+            SELECT id FROM products
+            WHERE REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' ') = :n
+            LIMIT :cap
+            """
+        ).bindparams(),
+        {"n": norm_name, "cap": _MATCH_CAP},
+    ).all()
+    return [r[0] for r in rows]
+
+
+def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
+    """Strict fuzzy match: require EVERY brand word (prefix) AND every size token.
+
+    Including the size tokens is what stops a cheap single bag from matching an
+    expensive multipack (their numeric signatures differ). Items with no numbers
+    (e.g. produce) fall back to brand-only matching.
+    """
+    parts = [f"+{t}*" for t in brand] + [f"+{n}" for n in sizes]
+    expr = " ".join(parts)
+    if not expr:
+        return []
     rows = db.execute(
         text(
             """
@@ -85,9 +118,13 @@ def _match_product_ids(db: Session, tokens: list[str]) -> list[int]:
     if rows:
         return [r[0] for r in rows]
 
+    # Precise LIKE fallback: require ALL tokens as substrings (not just one).
+    tokens = brand + sizes
+    clauses = " AND ".join(f"name LIKE :t{i}" for i in range(len(tokens)))
+    params = {f"t{i}": f"%{tokens[i]}%" for i in range(len(tokens))}
+    params["cap"] = _MATCH_CAP
     rows = db.execute(
-        text("SELECT id FROM products WHERE name LIKE :like LIMIT :cap"),
-        {"like": f"%{tokens[0]}%", "cap": _MATCH_CAP},
+        text(f"SELECT id FROM products WHERE {clauses} LIMIT :cap"), params
     ).all()
     return [r[0] for r in rows]
 
@@ -241,15 +278,17 @@ def build_comparison(
 
 
 def compare_basket(db: Session, city: str, items: list) -> dict:
-    """Compare a basket with fuzzy, text-based product matching.
+    """Compare a basket with tiered product matching (per store, per item):
 
-    Because the chains use different barcodes AND different name wordings for the
-    same item, both barcode and exact-name matching drop competing chains. For
-    each basket item we instead take its prominent words and FULLTEXT-match every
-    overlapping product in the DB, so 'קוקה קולה שישיה' also reaches Rami Levy's
-    'קוקה קולה 1.5'. Each basket item keeps a representative id, and per store we
-    take the cheapest matching product to represent that item (so the response
-    shape — and the UI — stay unchanged).
+      Tier 1 — the exact submitted product_id, if the store carries it.
+      Tier 2 — products with the same (normalized) name (same item, different
+               barcode across chains).
+      Tier 3 — strict fuzzy: brand words AND size tokens (so a 10-pack never
+               borrows a cheap single bag's price).
+
+    For each (store, item) we take the BEST available tier and the cheapest price
+    within it — an exact/name match is never overridden by a cheaper-but-wrong
+    fuzzy match. The response shape (one representative id per item) is unchanged.
     """
     empty = {
         "city": city,
@@ -294,15 +333,20 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
         for rid in repr_ids
     }
 
-    # 3. fuzzy-match each basket item to overlapping products (a product may map
-    #    to several basket lines — emitted once per line later).
-    pid_to_reprs: dict[int, set[int]] = defaultdict(set)
+    # 3. candidate products per item, tagged with a match tier (1=exact id,
+    #    2=same normalized name, 3=strict fuzzy with brand + size tokens).
+    cand: dict[int, dict[int, int]] = {}
     for rid in repr_ids:
-        pid_to_reprs[rid].add(rid)  # the item itself is always a candidate
-        for pid in _match_product_ids(db, prominent_tokens(id_info[rid]["name"])):
-            pid_to_reprs[pid].add(rid)
+        name = id_info[rid]["name"]
+        tiers: dict[int, int] = {rid: 1}  # exact submitted product id
+        for pid in _same_name_ids(db, _norm_name(name)):
+            tiers.setdefault(pid, 2)
+        for pid in _fuzzy_ids(db, prominent_tokens(name), size_tokens(name)):
+            tiers.setdefault(pid, 3)
+        cand[rid] = tiers
 
-    # 4. prices for every matched product in the requested city
+    # 4. prices for every candidate product in the requested city
+    all_pids = sorted({pid for tiers in cand.values() for pid in tiers})
     price_rows = db.execute(
         text(
             """
@@ -313,16 +357,46 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
             WHERE s.city = :city AND pr.product_id IN :pids
             """
         ).bindparams(bindparam("pids", expanding=True)),
-        {"city": city, "pids": list(pid_to_reprs)},
+        {"city": city, "pids": all_pids},
     ).mappings().all()
 
-    # 5. fan each price row out to the basket line(s) it matched; build_comparison
-    #    then keeps the MIN price per (store, item) = cheapest matching product.
-    remapped: list[dict] = []
+    price_at: dict[tuple[int, int], Decimal] = {}
+    store_meta: dict[int, dict] = {}
     for r in price_rows:
-        for rep in pid_to_reprs.get(r["product_id"], ()):
-            row = dict(r)
-            row["product_id"] = rep
-            remapped.append(row)
+        price = r["price"]
+        if price is None:
+            continue
+        key = (r["store_id"], r["product_id"])
+        if key not in price_at or price < price_at[key]:
+            price_at[key] = price
+        store_meta.setdefault(
+            r["store_id"],
+            {
+                "store_id": r["store_id"],
+                "chain_id": r["chain_id"],
+                "chain_name": r["chain_name"],
+                "store_name": r["store_name"],
+                "address": r["address"],
+                "city": r["city"],
+            },
+        )
 
-    return build_comparison(city, repr_ids, qty_by_repr, products_meta, remapped)
+    # 5. per (store, item): pick the best available tier, then the cheapest price
+    #    within it → one representative price row per (store, item).
+    chosen: list[dict] = []
+    for sid, meta in store_meta.items():
+        for rid in repr_ids:
+            best: tuple[int, Decimal] | None = None  # (tier, price)
+            for pid, tier in cand[rid].items():
+                price = price_at.get((sid, pid))
+                if price is None:
+                    continue
+                if best is None or tier < best[0] or (tier == best[0] and price < best[1]):
+                    best = (tier, price)
+            if best is not None:
+                row = dict(meta)
+                row["product_id"] = rid
+                row["price"] = best[1]
+                chosen.append(row)
+
+    return build_comparison(city, repr_ids, qty_by_repr, products_meta, chosen)
