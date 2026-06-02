@@ -88,6 +88,21 @@ def test_no_complete_store_yields_no_winner_but_still_lists_stores():
     assert all(s["rank"] is None for s in res["stores"])
 
 
+def test_cheapest_barcode_per_name_wins_in_store():
+    # After name-grouping, two barcodes of the same item collapse onto one
+    # representative id — the store must be costed with the cheaper barcode.
+    pids = [1]
+    qty = {1: Decimal("1")}
+    rows = [
+        _row(10, "רמי לוי", 1, "9.90"),
+        _row(10, "רמי לוי", 1, "7.50"),  # same store + representative product
+    ]
+    res = build_comparison(CITY, pids, qty, PRODUCTS, rows)
+    s = res["stores"][0]
+    assert s["total"] == 7.5
+    assert s["items"][0]["unit_price"] == 7.5
+
+
 def test_quantity_multiplies_line_total():
     pids = [1]
     qty = {1: Decimal("3")}

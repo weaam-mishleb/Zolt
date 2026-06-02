@@ -14,12 +14,19 @@ Ranking rule (important):
 """
 from __future__ import annotations
 
+import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 _TWO_PLACES = Decimal("0.01")
+_NAME_WS = re.compile(r"\s+")
+
+
+def _norm_name(name: str | None) -> str:
+    """Trim and collapse inner whitespace so the same item matches by name."""
+    return _NAME_WS.sub(" ", (name or "").strip())
 
 
 def _money(value: Decimal | None) -> float | None:
@@ -135,37 +142,88 @@ def build_comparison(
 
 
 def compare_basket(db: Session, city: str, items: list) -> dict:
-    """Resolve basket prices from the DB, then rank via `build_comparison`."""
-    # merge duplicate product ids by summing their quantities
-    qty_by_pid: dict[int, Decimal] = {}
-    for it in items:
-        qty_by_pid[it.product_id] = qty_by_pid.get(it.product_id, Decimal("0")) + Decimal(
-            str(it.quantity)
-        )
-    pids = list(qty_by_pid.keys())
+    """Compare a basket by PRODUCT NAME, not strictly by barcode.
 
+    Chains use different barcodes/PLUs for the same item, so matching only the
+    submitted product_ids drops competing chains. Instead:
+      1. look up the names of the submitted product_ids,
+      2. normalize them (trim + collapse whitespace),
+      3. find every product in the DB that shares those names,
+      4. for each store take the cheapest barcode per name, and
+      5. group/rank by name (each name keeps one representative id so the
+         existing response shape — and the UI — stay unchanged).
+    """
     empty = {
         "city": city,
-        "requested_product_ids": pids,
+        "requested_product_ids": [],
         "products": [],
         "store_count": 0,
         "complete_store_count": 0,
         "winner_store_id": None,
         "stores": [],
     }
-    if not pids:
+
+    submitted_ids = list({it.product_id for it in items})
+    if not submitted_ids:
         return empty
 
-    prod_rows = db.execute(
-        text("SELECT id, name, barcode FROM products WHERE id IN :pids").bindparams(
-            bindparam("pids", expanding=True)
+    # 1. names (+ barcode for display) of the submitted products
+    sub_rows = db.execute(
+        text("SELECT id, name, barcode FROM products WHERE id IN :ids").bindparams(
+            bindparam("ids", expanding=True)
         ),
-        {"pids": pids},
+        {"ids": submitted_ids},
     ).mappings().all()
-    products = {
-        r["id"]: {"id": r["id"], "name": r["name"], "barcode": r["barcode"]} for r in prod_rows
-    }
+    id_info = {r["id"]: r for r in sub_rows}
 
+    # 2. one representative id + summed quantity per normalized name
+    repr_for_name: dict[str, int] = {}
+    qty_by_repr: dict[int, Decimal] = {}
+    products_meta: dict[int, dict] = {}
+    for it in items:
+        info = id_info.get(it.product_id)
+        if info is None:
+            continue
+        norm = _norm_name(info["name"])
+        if not norm:
+            continue
+        rep = repr_for_name.get(norm)
+        if rep is None:
+            rep = it.product_id  # first submitted id for this name represents it
+            repr_for_name[norm] = rep
+            products_meta[rep] = {
+                "id": rep,
+                "name": (info["name"] or "").strip(),
+                "barcode": info["barcode"],
+            }
+            qty_by_repr[rep] = Decimal("0")
+        qty_by_repr[rep] += Decimal(str(it.quantity))
+
+    repr_ids = list(qty_by_repr)
+    if not repr_ids:
+        return empty
+
+    names = list(repr_for_name)
+
+    # 3. every product (any barcode) whose normalized name matches → its rep id
+    match_rows = db.execute(
+        text(
+            """
+            SELECT id, name FROM products
+            WHERE REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' ') IN :names
+            """
+        ).bindparams(bindparam("names", expanding=True)),
+        {"names": names},
+    ).mappings().all()
+    pid_to_repr: dict[int, int] = {}
+    for r in match_rows:
+        rep = repr_for_name.get(_norm_name(r["name"]))
+        if rep is not None:
+            pid_to_repr[r["id"]] = rep
+    for rep in repr_ids:  # always include the submitted ids themselves
+        pid_to_repr.setdefault(rep, rep)
+
+    # 4. prices for all those barcodes in the requested city
     price_rows = db.execute(
         text(
             """
@@ -176,8 +234,15 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
             WHERE s.city = :city AND pr.product_id IN :pids
             """
         ).bindparams(bindparam("pids", expanding=True)),
-        {"city": city, "pids": pids},
+        {"city": city, "pids": list(pid_to_repr)},
     ).mappings().all()
 
-    result = build_comparison(city, pids, qty_by_pid, products, [dict(r) for r in price_rows])
-    return result
+    # 5. collapse every barcode onto its name's representative id — build_comparison
+    #    then keeps the MIN price per (store, name) = cheapest barcode per store.
+    remapped = []
+    for r in price_rows:
+        row = dict(r)
+        row["product_id"] = pid_to_repr[r["product_id"]]
+        remapped.append(row)
+
+    return build_comparison(city, repr_ids, qty_by_repr, products_meta, remapped)
