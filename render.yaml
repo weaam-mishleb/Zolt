@@ -1,0 +1,41 @@
+# ───────────────────────── Render Blueprint — Zolt API ─────────────────────────
+# Deploys the FastAPI backend. Render does NOT offer managed MySQL, so host the
+# database on Railway (or Aiven) and paste its connection string into DATABASE_URL.
+#
+# Deploy:  Render Dashboard → New → Blueprint → pick this repo → fill the
+#          "sync: false" secrets (DATABASE_URL, CORS_ORIGINS, ADMIN_PASSWORD_HASH).
+services:
+  - type: web
+    name: zolt-api
+    runtime: python
+    plan: free
+    region: frankfurt          # closest Render region to Israel
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # Connection string from Railway/Aiven, e.g. mysql://user:pass@host:port/db
+      - key: DATABASE_URL
+        sync: false
+      # Your Vercel production domain, e.g. https://zolt.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      # Also allow Vercel preview deployments (zolt-git-*.vercel.app)
+      - key: CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app$"
+      - key: JWT_SECRET
+        generateValue: true     # Render generates a strong random secret
+      - key: JWT_EXPIRE_HOURS
+        value: "1"
+      - key: ADMIN_USERNAME
+        value: "admin"
+      # Generate with: python -m backend.app.security 'your-password'
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      # Off in prod: free instances sleep, so seed the ETL manually (see DEPLOYMENT.md)
+      - key: SCHEDULER_ENABLED
+        value: "false"

@@ -148,6 +148,12 @@ python -m etl.run --full                      # or `python -m etl.run` for the l
 cd frontend && npm install && npm run dev     # http://localhost:5173
 ```
 
+### ☁️ Deploy to production
+
+**[→ DEPLOYMENT.md](DEPLOYMENT.md)** — Vercel (frontend) · Render (FastAPI) · Railway (MySQL),
+with a ready [`render.yaml`](render.yaml) blueprint, [`frontend/vercel.json`](frontend/vercel.json)
+SPA config, a `python -m scripts.init_db` schema helper, and a step-by-step checklist.
+
 ---
 
 ## 🔌 API
