@@ -30,6 +30,11 @@ Zolt/
 │       ├── schemas.py      # Pydantic responses
 │       ├── routers/        # products, stores
 │       └── services/       # search service
+├── etl/
+│   ├── config.py           # נתיבים, רשתות, גדלי batch, עמודות forward-fill
+│   ├── normalize.py        # ניקוי/נרמול שורות (ברקוד, מחיר, קוד חנות)
+│   ├── loader.py           # batch upsert (INSERT ... ON DUPLICATE KEY UPDATE)
+│   └── run.py              # CLI: streaming + תזמור (תומך ‎--dry-run‎)
 └── archive/                # ה-Kaggle dataset המקומי (לא נכנס ל-git)
 ```
 
@@ -64,6 +69,20 @@ uvicorn backend.app.main:app --reload      # http://127.0.0.1:8000  ·  docs: /d
 - `GET /stores?city=...&chain=...` — רשימת סניפים מסוננת לפי עיר/רשת.
 - `GET /stores/cities` — רשימת ערים (לתפריט הסינון בצד הלקוח).
 - `GET /health` — בדיקת תקינות כולל חיבור ל-DB.
+
+### ETL (טעינת הדאטה)
+
+```bash
+pip install -r etl/requirements.txt
+python -m etl.run --dry-run        # פירסור ואימות בלבד (ללא DB)
+python -m etl.run                  # טעינה בפועל ל-MySQL (snapshot)
+python -m etl.run --full           # שימוש בקטלוג המחירים המלא
+```
+
+ה-ETL קורא את קבצי ה-CSV המקומיים (פורמט "מחירים שקופים"), עושה streaming ב-chunks
+(חסכוני בזיכרון), עושה **forward-fill** לעמודות הזהות (chain/store) שמופיעות רק בראש כל בלוק,
+מנרמל קודים (הסרת אפסים מובילים), ומבצע **batch upsert של 1,000** עם
+`INSERT ... ON DUPLICATE KEY UPDATE`. החיבור מחיר→חנות נעשה לפי `(chain_id, store_code)`.
 
 מקור הנתונים: ה-Kaggle dataset ‏"israeli-supermarkets-data" (קבצי CSV/JSON בפורמט "מחירים שקופים")
 שכבר חולץ מקומית לתיקיית `archive/`.
