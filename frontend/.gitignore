@@ -1,0 +1,9 @@
+# Vite / frontend
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.env
+.env.*
+!.env.example

@@ -39,6 +39,9 @@ Zolt/
 │   ├── run.py              # CLI: streaming + תזמור (תומך ‎--dry-run‎)
 │   ├── refresh.py          # הורדה מ-Kaggle → ETL (ל-Scheduler)
 │   └── downloaders/        # kaggle_download.py
+├── frontend/               # React + Vite + Tailwind v4 (RTL)
+│   ├── index.html          # <html dir="rtl" lang="he">
+│   └── src/                # App + components (SearchBar, BasketSidebar, Header)
 ├── secrets/                # kaggle.json (מוחרג מ-git)
 └── archive/                # ה-Kaggle dataset המקומי (לא נכנס ל-git)
 ```
@@ -104,6 +107,20 @@ python -m etl.run --full           # שימוש בקטלוג המחירים המ
 (חסכוני בזיכרון), עושה **forward-fill** לעמודות הזהות (chain/store) שמופיעות רק בראש כל בלוק,
 מנרמל קודים (הסרת אפסים מובילים), ומבצע **batch upsert של 1,000** עם
 `INSERT ... ON DUPLICATE KEY UPDATE`. החיבור מחיר→חנות נעשה לפי `(chain_id, store_code)`.
+
+### Frontend (React + Vite + Tailwind v4, RTL)
+
+```bash
+cd frontend
+cp .env.example .env          # להגדיר VITE_API_BASE_URL אם צריך
+npm install
+npm run dev                   # http://localhost:5173
+```
+
+ה-app הוא RTL מלא (`<html dir="rtl" lang="he">`, פונט Rubik). הפריסה: שורת חיפוש עם
+**אוטו-קומפליט** (קריאה ל-`/products/search` עם debounce) וסיידבר **סל** (הוספה/הסרה,
+שינוי כמות, בחירת עיר מ-`/stores/cities`, שמירה ל-localStorage). כפתור "השוו מחירים"
+מחובר ל-`/basket/compare` בשלב 7.
 
 מקור הנתונים: ה-Kaggle dataset ‏"israeli-supermarkets-data" (קבצי CSV/JSON בפורמט "מחירים שקופים")
 שכבר חולץ מקומית לתיקיית `archive/`.

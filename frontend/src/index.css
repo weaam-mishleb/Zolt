@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Project design tokens (Tailwind v4 CSS-first config). */
+@theme {
+  --font-sans: "Rubik", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+}
