@@ -89,10 +89,10 @@ class Loader:
     def __init__(
         self,
         engine: Engine,
-        batch_size: int = 500,
-        max_retries: int = 5,
+        batch_size: int = 250,
+        max_retries: int = 12,
         retry_base_delay: float = 1.0,
-        retry_max_delay: float = 30.0,
+        retry_max_delay: float = 60.0,
     ):
         self.engine = engine
         self.batch_size = batch_size
@@ -115,6 +115,7 @@ class Loader:
                     f"{attempt + 1}/{self.max_retries} in {delay:.0f}s",
                     file=sys.stderr,
                 )
+                self.engine.dispose()  # drop the whole (possibly stale) pool → fresh conn
                 time.sleep(delay)
                 delay = min(delay * 2, self.retry_max_delay)
 

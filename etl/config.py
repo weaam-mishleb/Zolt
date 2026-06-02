@@ -20,11 +20,11 @@ CHAIN_IDS: dict[str, str] = {
     "osher_ad": "7290103152017",
 }
 
-# Upsert batch size and streaming chunk size. Batch size is kept small (500) so
-# each multi-row INSERT sent over a WAN to a cloud DB stays well under proxy
-# timeouts; drop it further with `--batch-size 250` if a remote DB is very flaky.
+# Upsert batch size and streaming chunk size. Batch size is small (250) so each
+# multi-row INSERT clears a high-latency WAN / cloud proxy quickly; for a very
+# distant or flaky DB drop it further with `--batch-size 100`.
 # Chunk size is kept modest so peak RAM stays low (stdlib csv streaming).
-BATCH_SIZE = 500
+BATCH_SIZE = 250
 CHUNK_SIZE = 5_000
 
 # The feed is "grouped": only the first row of each store block carries the

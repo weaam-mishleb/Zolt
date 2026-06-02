@@ -20,7 +20,11 @@ engine = create_engine(
     pool_recycle=settings.db_pool_recycle,
     pool_timeout=settings.db_pool_timeout,
     pool_pre_ping=True,
-    connect_args={"connect_timeout": settings.db_connect_timeout},
+    connect_args={
+        "connect_timeout": settings.db_connect_timeout,
+        "read_timeout": settings.db_read_timeout,
+        "write_timeout": settings.db_write_timeout,
+    },
     future=True,
 )
 

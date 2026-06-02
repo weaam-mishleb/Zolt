@@ -192,7 +192,13 @@ def run(args: argparse.Namespace) -> None:
 
         from .loader import Loader
 
-        loader = Loader(engine, batch_size=args.batch_size)
+        loader = Loader(
+            engine,
+            batch_size=args.batch_size,
+            max_retries=getattr(args, "max_retries", 12),
+            retry_base_delay=getattr(args, "retry_base_delay", 1.0),
+            retry_max_delay=getattr(args, "retry_max_delay", 60.0),
+        )
 
     print(f"Zolt ETL — data_dir={data_dir}  chains={chains}  "
           f"{'DRY-RUN' if dry else 'DB'}  {'full' if args.full else 'snapshot'}")
@@ -240,6 +246,9 @@ def run_pipeline(
     chunksize: int = CHUNK_SIZE,
     batch_size: int = BATCH_SIZE,
     limit_rows: int | None = None,
+    max_retries: int = 12,
+    retry_base_delay: float = 1.0,
+    retry_max_delay: float = 60.0,
 ) -> None:
     """Programmatic entry point (used by the scheduler / admin trigger)."""
     run(
@@ -251,6 +260,9 @@ def run_pipeline(
             chunksize=chunksize,
             batch_size=batch_size,
             limit_rows=limit_rows,
+            max_retries=max_retries,
+            retry_base_delay=retry_base_delay,
+            retry_max_delay=retry_max_delay,
         )
     )
 
@@ -263,7 +275,14 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="parse & validate only, no DB writes")
     p.add_argument("--limit-rows", type=int, default=None, help="cap rows per chain (testing)")
     p.add_argument("--chunksize", type=int, default=CHUNK_SIZE)
-    p.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    p.add_argument("--batch-size", type=int, default=BATCH_SIZE,
+                   help="rows per multi-row INSERT (smaller = more WAN-friendly)")
+    p.add_argument("--max-retries", type=int, default=12,
+                   help="retries per batch on transient connection drops")
+    p.add_argument("--retry-base-delay", type=float, default=1.0,
+                   help="initial backoff seconds (doubles each retry)")
+    p.add_argument("--retry-max-delay", type=float, default=60.0,
+                   help="cap for the exponential backoff, seconds")
     run(p.parse_args())
 
 

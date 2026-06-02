@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     db_pool_recycle: int = 3600  # seconds; recycle stale conns (cloud DBs drop idle ones)
     db_pool_timeout: int = 30
-    db_connect_timeout: int = 30  # seconds; PyMySQL connect_args (slow/flaky WAN)
+    # PyMySQL socket timeouts (connect_args) — generous for a high-latency WAN to a
+    # cloud DB. A read/write that stalls past these raises 2013 → the loader retries.
+    db_connect_timeout: int = 60
+    db_read_timeout: int = 120
+    db_write_timeout: int = 120
 
     # ── API / CORS ───────────────────────────────────────────
     app_name: str = "Zolt API"
