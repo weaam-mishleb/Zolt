@@ -21,8 +21,9 @@ CHAIN_IDS: dict[str, str] = {
 }
 
 # Upsert batch size (the plan's "groups of 1,000") and streaming chunk size.
+# Chunk size is kept modest so peak RAM stays low (stdlib csv streaming).
 BATCH_SIZE = 1000
-CHUNK_SIZE = 50_000
+CHUNK_SIZE = 5_000
 
 # The feed is "grouped": only the first row of each store block carries the
 # chain/store identity columns; the rest are blank. These columns are

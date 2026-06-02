@@ -1,5 +1,5 @@
 # Zolt ETL — Python dependencies
-pandas>=2.2
+# (parsing uses the stdlib csv module — no pandas — to keep peak RAM low)
 SQLAlchemy>=2.0
 PyMySQL>=1.1
 pydantic-settings>=2.3

@@ -6,18 +6,18 @@ Usage (from the project root):
     python -m etl.run --full          # use the full price catalog files
     python -m etl.run --chains shufersal --limit-rows 100000
 
-Streaming with pandas `chunksize` keeps memory flat on the multi-hundred-MB
-price files; products and prices are upserted in batches of `--batch-size`.
+Streaming with the stdlib `csv` module keeps memory flat (no pandas/DataFrame
+overhead) even on the multi-hundred-MB price files; products and prices are
+upserted in batches of `--batch-size`.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 import time
 from collections import Counter
 from pathlib import Path
-
-import pandas as pd
 
 from .config import (
     BATCH_SIZE,
@@ -34,37 +34,44 @@ _EMPTY = ("", "''", '""')
 
 
 def _read_csv_chunks(path: Path, chunksize: int):
-    """Yield lists of row-dicts, forward-filling the grouped identity columns.
+    """Yield lists of row-dicts using the stdlib csv module (bounded, low memory).
 
-    All columns are read as strings (barcodes / zero-padded codes preserved).
-    Because a store block can straddle a chunk boundary, the last known value
-    of each fill column is carried into the next chunk.
+    All columns stay as strings (barcodes / zero-padded codes preserved).
+    Malformed lines are skipped, and the grouped identity columns are
+    forward-filled across rows AND chunk boundaries (a store block may straddle
+    a chunk), so the chunk size never affects correctness.
     """
-    carry: dict[str, object] = {}
-    reader = pd.read_csv(
-        path,
-        chunksize=chunksize,
-        dtype=str,
-        keep_default_na=False,
-        encoding="utf-8",
-        on_bad_lines="skip",
-    )
-    for chunk in reader:
-        cols = [c for c in GROUP_FILL_COLS if c in chunk.columns]
-        if cols:
-            chunk[cols] = chunk[cols].replace(list(_EMPTY), pd.NA)
-            first = chunk.index[0]
-            for c in cols:  # seed leading blanks from the previous chunk
-                if pd.isna(chunk.at[first, c]) and carry.get(c) is not None:
-                    chunk.at[first, c] = carry[c]
-            chunk[cols] = chunk[cols].ffill()
-            last = chunk.index[-1]
-            for c in cols:
-                v = chunk.at[last, c]
-                if not pd.isna(v):
-                    carry[c] = v
-            chunk = chunk.where(pd.notna(chunk), "")
-        yield chunk.to_dict("records")
+    carry: dict[int, str] = {}
+    with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
+        reader = csv.reader(fh)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return
+        ncol = len(header)
+        fill_idx = [i for i, name in enumerate(header) if name in GROUP_FILL_COLS]
+
+        batch: list[dict] = []
+        while True:
+            try:
+                row = next(reader)
+            except StopIteration:
+                break
+            except csv.Error:
+                continue  # skip a malformed line, keep going (≈ on_bad_lines='skip')
+            if len(row) != ncol:
+                continue  # wrong field count → skip
+            for i in fill_idx:  # forward-fill grouped chain/store identity columns
+                if row[i].strip() in _EMPTY:
+                    row[i] = carry.get(i, "")
+                else:
+                    carry[i] = row[i]
+            batch.append({header[i]: row[i] for i in range(ncol)})
+            if len(batch) >= chunksize:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
 
 # ──────────────────────────── stores ────────────────────────────
