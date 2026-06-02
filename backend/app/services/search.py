@@ -21,7 +21,11 @@ def _boolean_expr(q: str) -> str:
 
 
 def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
-    """Search products by name.
+    """Search products by name, returning one entry per distinct name.
+
+    Different chains use different barcodes for the same item, so `products`
+    holds several rows with the same `name`. We `GROUP BY name` (picking the
+    lowest id as the representative) so the autocomplete shows no duplicates.
 
     Primary path: FULLTEXT boolean search with prefix wildcards (fast, ranked).
     Fallback: LIKE substring match — covers very short queries and tokens that
@@ -35,10 +39,13 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     if expr:
         ft_sql = text(
             """
-            SELECT id, barcode, name, manufacturer, unit_qty, unit_of_measure,
-                   MATCH(name) AGAINST (:expr IN BOOLEAN MODE) AS score
+            SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
+                   MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
+                   MIN(unit_of_measure) AS unit_of_measure,
+                   MAX(MATCH(name) AGAINST (:expr IN BOOLEAN MODE)) AS score
             FROM products
             WHERE MATCH(name) AGAINST (:expr IN BOOLEAN MODE)
+            GROUP BY name
             ORDER BY score DESC, CHAR_LENGTH(name) ASC
             LIMIT :limit
             """
@@ -50,9 +57,12 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     # Fallback — substring match, ranking exact prefixes first.
     like_sql = text(
         """
-        SELECT id, barcode, name, manufacturer, unit_qty, unit_of_measure
+        SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
+               MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
+               MIN(unit_of_measure) AS unit_of_measure
         FROM products
         WHERE name LIKE :contains
+        GROUP BY name
         ORDER BY (name LIKE :prefix) DESC, CHAR_LENGTH(name) ASC
         LIMIT :limit
         """
