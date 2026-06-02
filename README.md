@@ -57,6 +57,12 @@ Zolt/
 
 ## הרצה מקומית
 
+> **הדרך הקצרה (Makefile):** `make setup` (התקנת תלויות) → `make run` (מרים MySQL + FastAPI + Vite יחד).
+> `make stop` לכיבוי, `make etl` לטעינת הדאטה, `make help` לרשימת הפקודות.
+> דרוש Docker Desktop + Node ≥18.
+
+להלן הפירוט הידני (שקול ל-Makefile):
+
 > דרוש Docker Desktop.
 
 ```bash
