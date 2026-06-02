@@ -23,12 +23,11 @@ A modern, full-stack, **RTL** web platform that compares a live shopping basket 
 ---
 
 ## 📸 Screenshots
-
 | Home & Search | Comparison Table |
 |:---:|:---:|
-| ![Home Page](docs/screenshots/home.png) | ![Comparison Table](docs/screenshots/comparison.png) |
+| ![Home Page](docs/screenshots/i1.png) | ![Comparison Table](docs/screenshots/i2.png) |
 | **Autocomplete Search** | **Admin Panel** |
-| ![Search](docs/screenshots/search.png) | ![Admin Panel](docs/screenshots/admin.png) |
+| ![Autocomplete Search](docs/screenshots/i3.png) | ![Admin Panel](docs/screenshots/i4.png) |
 
 ---
 
