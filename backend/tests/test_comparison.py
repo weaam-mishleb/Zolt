@@ -103,6 +103,28 @@ def test_cheapest_barcode_per_name_wins_in_store():
     assert s["items"][0]["unit_price"] == 7.5
 
 
+def test_results_capped_at_10_with_chain_mix():
+    pids = [1]
+    qty = {1: Decimal("1")}
+    rows = []
+    # 12 cheap Shufersal branches + 1 (pricey) Rami Levy + 1 (pricey) Osher Ad
+    for i in range(1, 13):
+        rows.append(_row(100 + i, "שופרסל", 1, 10 + i))   # totals 11..22
+    rows.append(_row(200, "רמי לוי", 1, 50))
+    rows.append(_row(300, "אושר עד", 1, 60))
+
+    res = build_comparison(CITY, pids, qty, PRODUCTS, rows, limit=10)
+
+    assert res["store_count"] == 14          # total branches found
+    assert res["shown_store_count"] == 10
+    assert len(res["stores"]) == 10
+    # all three chains are represented despite Shufersal being far cheaper
+    assert {s["chain_name"] for s in res["stores"]} == {"שופרסל", "רמי לוי", "אושר עד"}
+    # the overall-cheapest (winner) is kept and ranked first
+    assert res["winner_store_id"] == 101
+    assert res["stores"][0]["store_id"] == 101
+
+
 def test_prominent_tokens_skips_sizes_units_and_stopwords():
     assert prominent_tokens("קוקה קולה שישיה 1.5 ליטר") == ["קוקה", "קולה"]
     assert prominent_tokens("חלב תנובה 3% 1 ליטר") == ["חלב", "תנובה"]

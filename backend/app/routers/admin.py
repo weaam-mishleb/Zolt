@@ -1,9 +1,9 @@
 """Admin endpoints: login (bcrypt + JWT) and JWT-protected operations."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
-from .. import scheduler
+from .. import etl_runner, scheduler
 from ..config import settings
 from ..schemas import LoginRequest, TokenResponse
 from ..security import create_access_token, get_current_admin, verify_password
@@ -46,3 +46,32 @@ def trigger_etl(admin: str = Depends(get_current_admin)):
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     return {"status": "accepted", "job_id": job_id}
+
+
+@router.post(
+    "/etl/run",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run the local ETL now in the background (protected)",
+)
+def run_etl(
+    background_tasks: BackgroundTasks,
+    full: bool = False,
+    admin: str = Depends(get_current_admin),
+):
+    """Kick off the local ETL (parse archive/ → upsert) via BackgroundTasks so
+    the HTTP request returns immediately instead of blocking for minutes."""
+    if etl_runner.is_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="ETL is already running"
+        )
+    background_tasks.add_task(etl_runner.run_etl_job, full)
+    return {
+        "status": "started",
+        "full": full,
+        "message": "ETL started in the background",
+    }
+
+
+@router.get("/etl/status", summary="Manual-ETL run state (protected)")
+def etl_status(admin: str = Depends(get_current_admin)):
+    return etl_runner.get_state()

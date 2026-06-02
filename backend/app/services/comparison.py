@@ -98,17 +98,50 @@ def _money(value: Decimal | None) -> float | None:
     return float(value.quantize(_TWO_PLACES, rounding=ROUND_HALF_UP))
 
 
+def _select_branches(ordered: list[dict], limit: int) -> list[dict]:
+    """Cap the result to `limit` branches, favouring the cheapest while keeping
+    a mix of chains: take the cheapest branch of each chain first, then fill the
+    remaining slots with the next-cheapest branches. Display order is preserved.
+    """
+    if len(ordered) <= limit:
+        return ordered
+
+    rank_of = {s["store_id"]: i for i, s in enumerate(ordered)}
+    chosen: list[dict] = []
+    seen: set[int] = set()
+
+    seen_chains: set[str] = set()
+    for s in ordered:  # cheapest branch per chain (ordered is already cheapest-first)
+        if s["chain_name"] not in seen_chains:
+            seen_chains.add(s["chain_name"])
+            chosen.append(s)
+            seen.add(s["store_id"])
+
+    for s in ordered:  # fill remaining slots with the cheapest branches left
+        if len(chosen) >= limit:
+            break
+        if s["store_id"] not in seen:
+            chosen.append(s)
+            seen.add(s["store_id"])
+
+    chosen = chosen[:limit]
+    chosen.sort(key=lambda s: rank_of[s["store_id"]])
+    return chosen
+
+
 def build_comparison(
     city: str,
     pids: list[int],
     qty_by_pid: dict[int, Decimal],
     products: dict[int, dict],
     price_rows: list[dict],
+    limit: int = 10,
 ) -> dict:
     """Pure ranking logic (no DB) — unit-testable.
 
     `price_rows` are dict rows with: store_id, chain_id, chain_name, store_name,
-    address, city, product_id, price (Decimal).
+    address, city, product_id, price (Decimal). Results are capped to `limit`
+    branches (cheapest-first, with a mix of chains).
     """
     # group prices by store; guard against accidental duplicates (keep cheapest)
     stores: dict[int, dict] = {}
@@ -190,6 +223,7 @@ def build_comparison(
 
     ordered = complete + incomplete
     winner_id = complete[0]["store_id"] if complete else None
+    shown = _select_branches(ordered, limit)  # cap to `limit` branches
 
     return {
         "city": city,
@@ -197,10 +231,11 @@ def build_comparison(
         "products": [
             products.get(pid, {"id": pid, "name": None, "barcode": None}) for pid in pids
         ],
-        "store_count": len(ordered),
+        "store_count": len(ordered),          # total branches found in the city
         "complete_store_count": len(complete),
+        "shown_store_count": len(shown),      # branches actually returned (≤ limit)
         "winner_store_id": winner_id,
-        "stores": ordered,
+        "stores": shown,
     }
 
 

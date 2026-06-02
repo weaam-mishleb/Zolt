@@ -74,8 +74,9 @@ class BasketCompareResponse(BaseModel):
     city: str
     requested_product_ids: list[int]
     products: list[ProductBrief]
-    store_count: int
+    store_count: int                 # total branches found in the city
     complete_store_count: int
+    shown_store_count: int = 0        # branches returned after the 10-branch cap
     winner_store_id: int | None = None
     stores: list[StoreComparison]
 
