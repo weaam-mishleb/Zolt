@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
-from .routers import products, stores
+from .routers import basket, products, stores
 
 app = FastAPI(
     title=settings.app_name,
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(products.router)
 app.include_router(stores.router)
+app.include_router(basket.router)
 
 
 @app.get("/", tags=["meta"], summary="Service info")

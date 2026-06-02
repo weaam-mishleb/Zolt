@@ -68,6 +68,9 @@ uvicorn backend.app.main:app --reload      # http://127.0.0.1:8000  ·  docs: /d
 - `GET /products/search?q=...&limit=...` — חיפוש מוצרים / אוטו-קומפליט (FULLTEXT + fallback ל-LIKE).
 - `GET /stores?city=...&chain=...` — רשימת סניפים מסוננת לפי עיר/רשת.
 - `GET /stores/cities` — רשימת ערים (לתפריט הסינון בצד הלקוח).
+- `POST /basket/compare` — השוואת סל: מקבל עיר + מערך `{product_id, quantity}`, מחזיר
+  לכל סניף את `Σ(מחיר×כמות)`, ממוין עולה. סניפים שלמים מתחרים על המקום הראשון (`rank`),
+  וסניפים עם פריט חסר מוצגים אך מסומנים (`is_complete=false`, `missing_product_ids`).
 - `GET /health` — בדיקת תקינות כולל חיבור ל-DB.
 
 ### ETL (טעינת הדאטה)
