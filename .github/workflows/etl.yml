@@ -1,13 +1,24 @@
 name: ETL → Cloud DB
 
-# Runs the full ETL on GitHub's fast US runners (great network to both Kaggle and
-# Railway), so a slow/distant local connection is no longer the bottleneck.
+# Loads the full catalog into the cloud DB from GitHub's fast US runners, so a
+# slow/distant local link is no longer the bottleneck.
+#
+# Data source: the price files are mirrored as GZIPPED assets on a GitHub Release
+# of THIS repo, so NO Kaggle account/key is needed — they're pulled with the
+# built-in GITHUB_TOKEN. The tiny store CSVs are committed in db/seed_stores/.
+# One-time setup: create a release (default tag "dataset-v1") and upload the 3
+# files archive/price_full_file_*.csv.gz (see DEPLOYMENT.md).
 on:
-  workflow_dispatch: {}          # manual: Actions tab → "Run workflow"
-  schedule:
-    - cron: "0 3 * * 0"          # weekly refresh, Sunday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      data_tag:
+        description: "Release tag holding the *.csv.gz price files"
+        default: "dataset-v1"
 
-concurrency:                      # never let two ETL runs write at once
+permissions:
+  contents: read
+
+concurrency:
   group: etl
   cancel-in-progress: false
 
@@ -15,6 +26,9 @@ jobs:
   etl:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DATA_TAG: ${{ inputs.data_tag || 'dataset-v1' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,21 +40,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r etl/requirements.txt
 
-      - name: Stage dataset (committed store files + Kaggle price files)
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      - name: Stage dataset (committed stores + price files from the release)
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
           mkdir -p archive
-          cp db/seed_stores/*.csv archive/                         # tiny store files (in the repo)
-          for chain in shufersal rami_levy osher_ad; do            # big price files from Kaggle
-            kaggle datasets download -d erlichsefi/israeli-supermarkets-data \
-              -f price_full_file_${chain}.csv -p archive
-          done
-          for z in archive/*.zip; do unzip -o "$z" -d archive && rm -f "$z"; done
+          cp db/seed_stores/*.csv archive/
+          gh release download "$DATA_TAG" --repo "$GITHUB_REPOSITORY" -p '*.csv.gz' -D archive
+          gunzip -f archive/*.gz
           ls -lh archive
 
       - name: Initialize schema (idempotent)

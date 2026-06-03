@@ -70,20 +70,27 @@ Deploy → your API is live at `https://zolt-api.onrender.com` (check `/docs` an
 
 ---
 
-## 🤖 Seed the DB from the cloud — GitHub Actions (no local upload)
+## 🤖 Seed the DB from the cloud — GitHub Actions (no Kaggle, no local DB upload)
 
-If your local link to the DB is slow/flaky, **don't upload from your laptop** — let
-GitHub's runners do it. [`.github/workflows/etl.yml`](.github/workflows/etl.yml) runs the
-full ETL on GitHub's fast US servers (great network to both Kaggle and Railway).
+If your local link is slow/flaky, let GitHub's fast US runners do the upload.
+[`.github/workflows/etl.yml`](.github/workflows/etl.yml) pulls the price files from a
+**GitHub Release of this repo** (no Kaggle key needed — uses the built-in token) and
+streams the full ~2.4M prices into Railway.
 
-1. **Add three repo secrets** — GitHub → repo → *Settings → Secrets and variables → Actions → New repository secret*:
-   - `DATABASE_URL` — your Railway connection string (`mysql://user:pass@host:port/db`).
-   - `KAGGLE_USERNAME` and `KAGGLE_KEY` — the two values from your `secrets/kaggle.json`.
-2. **Run it:** Actions tab → **ETL → Cloud DB** → **Run workflow**.
-   It pulls the big price files from Kaggle, uses the small store files committed in
-   `db/seed_stores/`, creates the schema if missing, and upserts the full ~2.4M prices
-   straight into Railway. (It also runs weekly on its own.)
-3. Watch the live log; in a few minutes the cloud DB is fully loaded. 🎉
+**One-time: mirror the data on a Release** (you upload ~166 MB *gzipped*, once):
+```bash
+cd archive
+gzip -kf price_full_file_shufersal.csv price_full_file_rami_levy.csv price_full_file_osher_ad.csv
+```
+Then GitHub → repo → **Releases → Draft a new release** → tag `dataset-v1` → drag the
+three `archive/price_full_file_*.csv.gz` files as assets → **Publish**.
+*(The tiny store CSVs are already committed in `db/seed_stores/`.)*
+
+**Run it:**
+1. Add **one** secret — *Settings → Secrets and variables → Actions*: `DATABASE_URL`
+   (your Railway connection string).
+2. Actions tab → **ETL → Cloud DB** → **Run workflow** (tag defaults to `dataset-v1`).
+3. Watch the log; in a few minutes the cloud DB is fully loaded — your ISP never touched it. 🎉
 
 ---
 
