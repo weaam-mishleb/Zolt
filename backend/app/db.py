@@ -35,7 +35,9 @@ def _force_ipv4(url_str: str) -> str:
         ipv4 = socket.getaddrinfo(host, url.port or 3306, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
     except (socket.gaierror, IndexError, OSError):
         return url_str  # couldn't resolve IPv4 → fall back to the hostname
-    return str(url.set(host=ipv4))
+    # NB: str(url) would mask the password as '***' (1045 access-denied!) — render
+    # the real password explicitly.
+    return url.set(host=ipv4).render_as_string(hide_password=False)
 
 
 def _connect_args() -> dict:
