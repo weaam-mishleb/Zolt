@@ -1,0 +1,54 @@
+name: ETL → Cloud DB
+
+# Runs the full ETL on GitHub's fast US runners (great network to both Kaggle and
+# Railway), so a slow/distant local connection is no longer the bottleneck.
+on:
+  workflow_dispatch: {}          # manual: Actions tab → "Run workflow"
+  schedule:
+    - cron: "0 3 * * 0"          # weekly refresh, Sunday 03:00 UTC
+
+concurrency:                      # never let two ETL runs write at once
+  group: etl
+  cancel-in-progress: false
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r etl/requirements.txt
+
+      - name: Stage dataset (committed store files + Kaggle price files)
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p archive
+          cp db/seed_stores/*.csv archive/                         # tiny store files (in the repo)
+          for chain in shufersal rami_levy osher_ad; do            # big price files from Kaggle
+            kaggle datasets download -d erlichsefi/israeli-supermarkets-data \
+              -f price_full_file_${chain}.csv -p archive
+          done
+          for z in archive/*.zip; do unzip -o "$z" -d archive && rm -f "$z"; done
+          ls -lh archive
+
+      - name: Initialize schema (idempotent)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m scripts.init_db
+
+      - name: Run full ETL → cloud DB
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m etl.run --full --batch-size 1000   # fast low-latency link → larger batches
