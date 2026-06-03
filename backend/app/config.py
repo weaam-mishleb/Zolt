@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     db_connect_timeout: int = 60
     db_read_timeout: int = 120
     db_write_timeout: int = 120
+    # Force a TLS handshake (managed hosts like Railway run MySQL with SSL on and
+    # drop plaintext connects). Auto-enabled for *.rlwy.net hosts; set DB_SSL=true
+    # to force it elsewhere. Local (127.0.0.1) stays plaintext.
+    db_ssl: bool = False
 
     # ── API / CORS ───────────────────────────────────────────
     app_name: str = "Zolt API"

@@ -53,9 +53,11 @@ jobs:
       - name: Initialize schema (idempotent)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DB_SSL: "true"                # Railway MySQL needs a TLS handshake
         run: python -m scripts.init_db
 
       - name: Run full ETL → cloud DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DB_SSL: "true"
         run: python -m etl.run --full --batch-size 1000   # fast low-latency link → larger batches

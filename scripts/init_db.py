@@ -1,10 +1,10 @@
 """Create the Zolt tables in the database the current settings point at.
 
 Resilient to flaky / high-latency managed DBs (e.g. a distant Railway proxy that
-drops the first connection): a dedicated engine with ``pool_pre_ping=True`` and a
-long ``connect_timeout``, and the whole schema-apply is retried with exponential
-backoff on transient drops (MySQL 2013 / 2006 / 1053). ``CREATE TABLE IF NOT
-EXISTS`` makes re-running safe.
+drops the first connection): it uses the app's shared engine (``pool_pre_ping``,
+long WAN timeouts, and a TLS context for cloud hosts), and the whole schema-apply
+is retried with exponential backoff on transient drops (MySQL 2013 / 2006 / 1053).
+``CREATE TABLE IF NOT EXISTS`` makes re-running safe.
 
 It skips ``CREATE DATABASE`` / ``USE`` / ``SET NAMES`` so it targets whatever
 database the URL points to.
@@ -15,24 +15,15 @@ from __future__ import annotations
 
 import time
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError  # base of OperationalError/InterfaceError/etc.
 
-from backend.app.config import PROJECT_ROOT, settings
+from backend.app.config import PROJECT_ROOT
+from backend.app.db import engine  # shared engine: WAN timeouts + TLS for cloud DBs
 
 SCHEMA = PROJECT_ROOT / "db" / "init" / "01_schema.sql"
 _SKIP_PREFIXES = ("create database", "use ", "set names")
 _TRANSIENT_CODES = {2013, 2006, 1053}  # lost connection / gone away / shutdown
-
-# A dedicated, resilient engine (independent of the app's shared one) so a flaky
-# WAN to the cloud DB can't sink the very first schema connection.
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-    connect_args={"connect_timeout": 60, "read_timeout": 120, "write_timeout": 120},
-    future=True,
-)
 
 
 def _statements(sql: str) -> list[str]:
