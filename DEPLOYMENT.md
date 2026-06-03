@@ -70,6 +70,23 @@ Deploy → your API is live at `https://zolt-api.onrender.com` (check `/docs` an
 
 ---
 
+## 🤖 Seed the DB from the cloud — GitHub Actions (no local upload)
+
+If your local link to the DB is slow/flaky, **don't upload from your laptop** — let
+GitHub's runners do it. [`.github/workflows/etl.yml`](.github/workflows/etl.yml) runs the
+full ETL on GitHub's fast US servers (great network to both Kaggle and Railway).
+
+1. **Add three repo secrets** — GitHub → repo → *Settings → Secrets and variables → Actions → New repository secret*:
+   - `DATABASE_URL` — your Railway connection string (`mysql://user:pass@host:port/db`).
+   - `KAGGLE_USERNAME` and `KAGGLE_KEY` — the two values from your `secrets/kaggle.json`.
+2. **Run it:** Actions tab → **ETL → Cloud DB** → **Run workflow**.
+   It pulls the big price files from Kaggle, uses the small store files committed in
+   `db/seed_stores/`, creates the schema if missing, and upserts the full ~2.4M prices
+   straight into Railway. (It also runs weekly on its own.)
+3. Watch the live log; in a few minutes the cloud DB is fully loaded. 🎉
+
+---
+
 ## 📝 Notes & gotchas
 - **Free Render web services sleep** after ~15 min idle (first request cold-starts in ~30–60s). Fine for a demo.
 - **Scheduler is off in prod** (`SCHEDULER_ENABLED=false`) — sleeping instances + a 700 MB Kaggle download don't suit free tiers. Re-seed by re-running step 2 instead.
