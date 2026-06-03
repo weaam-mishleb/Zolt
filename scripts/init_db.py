@@ -13,11 +13,10 @@ database the URL points to.
 """
 from __future__ import annotations
 
-import sys
 import time
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError  # base of OperationalError/InterfaceError/etc.
 
 from backend.app.config import PROJECT_ROOT, settings
 
@@ -61,19 +60,23 @@ def _apply(statements: list[str]) -> None:
 
 def main(max_retries: int = 8) -> None:
     statements = _statements(SCHEMA.read_text(encoding="utf-8"))
+    print(f"init_db → applying {len(statements)} statements to "
+          f"{engine.url.host}:{engine.url.port}/{engine.url.database}", flush=True)
     delay = 2.0
     for attempt in range(max_retries + 1):
         try:
             _apply(statements)
-            print(f"✅ applied {len(statements)} statements to "
-                  f"{engine.url.host}/{engine.url.database}")
+            print("✅ schema applied successfully", flush=True)
             return
-        except OperationalError as exc:
-            if attempt >= max_retries or not _is_transient(exc):
+        # DBAPIError covers sqlalchemy.exc.OperationalError / InterfaceError / etc.;
+        # connection_invalidated is True for any dropped-connection variant.
+        except DBAPIError as exc:
+            transient = exc.connection_invalidated or _is_transient(exc)
+            if attempt >= max_retries or not transient:
                 raise
-            code = exc.orig.args[0] if getattr(exc, "orig", None) else "?"
-            print(f"  ! transient DB error {code} during init_db — retry "
-                  f"{attempt + 1}/{max_retries} in {delay:.0f}s", file=sys.stderr)
+            code = exc.orig.args[0] if getattr(exc.orig, "args", None) else "?"
+            print(f"Connection failed ({code}), retrying... "
+                  f"({attempt + 1}/{max_retries}) in {delay:.0f}s", flush=True)
             engine.dispose()  # force a brand-new connection on the next attempt
             time.sleep(delay)
             delay = min(delay * 2, 30.0)
