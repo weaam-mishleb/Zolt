@@ -12,7 +12,7 @@
 [![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
-[![Tests](https://img.shields.io/badge/unit%20tests-32%20passing-3FB950)](#-testing)
+[![Tests](https://img.shields.io/badge/unit%20tests-33%20passing-3FB950)](#-testing)
 [![Test Plan](https://img.shields.io/badge/test%20plan-10%2F10-3FB950)](#-testing)
 
 A modern, full-stack, **RTL** web platform that compares a live shopping basket across
@@ -164,7 +164,7 @@ SPA config, a `python -m scripts.init_db` schema helper, and a step-by-step chec
 | `GET /stores?city=&chain=` | List branches, filterable by city / chain |
 | `GET /stores/cities` | Distinct cities (for the combobox) |
 | `POST /basket/compare` | Compare a basket → ranked branches, winner, missing items |
-| `POST /admin/login` | Admin login (bcrypt) → JWT (1h) |
+| `POST /admin/login` | Admin login (bcrypt) → JWT (24h) |
 | `POST /admin/etl/run` | 🔒 Trigger the ETL in the background (BackgroundTasks) |
 | `GET /admin/etl/status` · `GET /admin/scheduler` | 🔒 ETL / scheduler state |
 | `GET /health` | Liveness + DB connectivity |
@@ -186,11 +186,11 @@ Shufersal 71% · Rami Levy 24% · Osher Ad 5%.
 ## 🧪 Testing
 
 ```bash
-make test                          # 32 backend unit tests
+make test                          # 33 backend unit tests
 python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1..TC-10)
 ```
 
-- **32** unit tests (comparison ranking, fuzzy tokenization, city normalization).
+- **33** unit tests (comparison ranking, fuzzy tokenization, city normalization).
 - **10/10** Test-Plan cases — incl. negative-quantity rejection (`400`), upsert-without-duplicate,
   malformed-row skipping, graceful no-stores response, JWT auth, and the **<100 MB ETL** budget.
 
