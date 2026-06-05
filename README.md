@@ -187,7 +187,7 @@ Shufersal 71% · Rami Levy 24% · Osher Ad 5%.
 
 ```bash
 make test                          # 33 backend unit tests
-python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1..TC-10)
+python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...TC-10)
 ```
 
 - **33** unit tests (comparison ranking, fuzzy tokenization, city normalization).
