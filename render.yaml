@@ -13,7 +13,10 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    # --timeout-graceful-shutdown: never wait forever for in-flight requests on
+    # SIGTERM — a hung request otherwise leaves a zombie instance ("Waiting for
+    # background tasks to complete") and the service stuck on "waking up".
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT --timeout-graceful-shutdown 15
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
@@ -30,7 +33,7 @@ services:
       - key: JWT_SECRET
         generateValue: true     # Render generates a strong random secret
       - key: JWT_EXPIRE_HOURS
-        value: "1"
+        value: "24"        # aligned with SRS FR-5.2
       - key: ADMIN_USERNAME
         value: "admin"
       # Generate with: python -m backend.app.security 'your-password'

@@ -117,7 +117,14 @@ def run_etl(
             "message": "ETL dispatched to GitHub Actions",
         }
 
-    # Local dev fallback — no GitHub credentials configured.
+    # Local dev fallback — no GitHub credentials configured. Refused on Render:
+    # the 512MB instance must never run the ETL in-process, and a hung DB link
+    # would strand the background task and block graceful shutdown.
+    if settings.on_render:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ETL dispatch not configured — set GH_PAT and GH_REPO on Render",
+        )
     if etl_runner.is_running():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="ETL is already running"

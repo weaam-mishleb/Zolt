@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     # ── API / CORS ───────────────────────────────────────────
     app_name: str = "Zolt API"
+    # Render sets RENDER=true on every service — used to refuse dev-only
+    # fallbacks (like the in-process ETL) on the 512MB production instance.
+    on_render: bool = Field(default=False, validation_alias="RENDER")
     # Comma-separated allowed origins (add your Vercel domain in production).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Optional regex to also allow Vercel preview URLs, e.g. https://.*\.vercel\.app$
