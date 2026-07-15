@@ -49,12 +49,15 @@ app.include_router(basket.router)
 app.include_router(admin.router)
 
 
-@app.get("/", tags=["meta"], summary="Service info")
+# GET + HEAD: Render's health check (healthCheckPath: /) probes with HEAD,
+# which a GET-only route rejects with 405 and the deploy times out.
+@app.api_route("/", methods=["GET", "HEAD"], tags=["meta"], summary="Service info")
 def root():
-    return {"service": settings.app_name, "version": app.version, "docs": "/docs"}
+    return {"status": "ok", "service": settings.app_name, "version": app.version, "docs": "/docs"}
 
 
-@app.get("/health", tags=["meta"], summary="Health check (incl. DB connectivity)")
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["meta"],
+               summary="Health check (incl. DB connectivity)")
 def health(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
