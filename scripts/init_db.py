@@ -21,7 +21,7 @@ from sqlalchemy.exc import DBAPIError  # base of OperationalError/InterfaceError
 from backend.app.config import PROJECT_ROOT
 from backend.app.db import engine  # shared engine: WAN timeouts + TLS for cloud DBs
 
-SCHEMA = PROJECT_ROOT / "db" / "init" / "01_schema.sql"
+SCHEMA_DIR = PROJECT_ROOT / "db" / "init"
 _SKIP_PREFIXES = ("create database", "use ", "set names")
 _TRANSIENT_CODES = {2013, 2006, 1053}  # lost connection / gone away / shutdown
 
@@ -50,7 +50,10 @@ def _apply(statements: list[str]) -> None:
 
 
 def main(max_retries: int = 8) -> None:
-    statements = _statements(SCHEMA.read_text(encoding="utf-8"))
+    sql = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted(SCHEMA_DIR.glob("*.sql"))
+    )
+    statements = _statements(sql)
     print(f"init_db → applying {len(statements)} statements to "
           f"{engine.url.host}:{engine.url.port}/{engine.url.database}", flush=True)
     delay = 2.0

@@ -115,14 +115,26 @@ function Dashboard({ token, onLogout }) {
     setErr('')
     try {
       const r = await runEtl(token, full)
-      setMsg(r.message || 'ה-ETL הופעל ברקע')
+      setMsg(r.mode === 'github' ? 'הריצה שוגרה ל-GitHub Actions ☁️' : r.message || 'ה-ETL הופעל ברקע')
       setTimeout(loadStatus, 800)
     } catch (e) {
-      setErr(e.status === 409 ? 'ETL כבר רץ כעת' : 'ההפעלה נכשלה')
+      setErr(
+        e.status === 409 ? 'ETL כבר רץ כעת'
+        : e.status === 502 ? 'שיגור ה-Workflow נכשל — בדקו את הגדרות GH_PAT / GH_REPO'
+        : 'ההפעלה נכשלה'
+      )
     }
   }
 
   const running = etl?.running
+  const pct = typeof etl?.progress === 'number' ? etl.progress : null
+  const statusMeta = {
+    queued:  { label: 'ממתין ל-Runner של GitHub…', color: 'text-amber-600' },
+    running: { label: 'רץ כעת',                    color: 'text-amber-600' },
+    success: { label: 'הסתיים בהצלחה',             color: 'text-emerald-600' },
+    failed:  { label: 'נכשל',                      color: 'text-rose-600' },
+    stale:   { label: 'הריצה נתקעה (אין עדכון)',   color: 'text-rose-600' },
+  }[etl?.status] || { label: '—', color: 'text-slate-500' }
 
   return (
     <Shell>
@@ -138,7 +150,8 @@ function Dashboard({ token, onLogout }) {
         <div className="animate-in rounded-3xl border border-slate-200/70 bg-white p-6 shadow-xl shadow-slate-900/5">
           <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">⚙️ הרצת ETL ידנית</h3>
           <p className="mt-1 text-sm text-slate-400">
-            טוען מחדש את הנתונים מהקבצים המקומיים אל בסיס הנתונים.
+            משגר את תהליך הטעינה ל-GitHub Actions ומעדכן את בסיס הנתונים בענן
+            (בסביבת פיתוח — רץ מקומית).
           </p>
 
           <label className="mt-4 flex items-center gap-2 text-sm text-slate-600">
@@ -156,21 +169,44 @@ function Dashboard({ token, onLogout }) {
             disabled={running}
             className="mt-4 w-full rounded-2xl bg-gradient-to-l from-emerald-600 to-teal-500 py-3 font-bold text-white shadow-lg shadow-emerald-600/25 transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
           >
-            {running ? 'ה-ETL רץ…' : 'הרץ ETL עכשיו'}
+            {running ? (pct !== null && etl.status === 'running' ? `ה-ETL רץ… ${pct}%` : 'ה-ETL רץ…') : 'הרץ ETL עכשיו'}
           </button>
 
           {msg && <p className="mt-3 rounded-xl bg-emerald-50 p-2 text-center text-sm text-emerald-700">{msg}</p>}
           {err && <p className="mt-3 rounded-xl bg-rose-50 p-2 text-center text-sm text-rose-600">{err}</p>}
 
-          {etl && (etl.started_at || etl.running) && (
+          {etl && (etl.status !== 'idle' || running) && (
             <div className="mt-4 rounded-2xl bg-slate-50 p-3 text-xs text-slate-500">
-              <div>
-                סטטוס:{' '}
-                <span className={running ? 'font-semibold text-amber-600' : 'font-semibold text-emerald-600'}>
-                  {running ? 'רץ כעת' : etl.ok === false ? 'נכשל' : 'הסתיים'}
+              <div className="flex items-center justify-between">
+                <span>
+                  סטטוס: <span className={`font-semibold ${statusMeta.color}`}>{statusMeta.label}</span>
                 </span>
+                {pct !== null && running && <span className="font-bold text-slate-600">{pct}%</span>}
               </div>
-              {etl.error && <div className="mt-1 text-rose-500">שגיאה: {etl.error}</div>}
+
+              {etl.phase && running && <div className="mt-1 text-slate-400">{etl.phase}</div>}
+
+              {pct !== null && (running || etl.status === 'success') && (
+                <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ease-out ${
+                      etl.status === 'queued'
+                        ? 'animate-pulse bg-amber-400'
+                        : etl.status === 'success'
+                          ? 'bg-emerald-500'
+                          : 'bg-gradient-to-l from-emerald-500 to-teal-400'
+                    }`}
+                    style={{ width: `${etl.status === 'queued' ? 4 : Math.max(pct, 2)}%` }}
+                  />
+                </div>
+              )}
+
+              {etl.detail && (etl.status === 'failed' || etl.status === 'stale') && (
+                <div className="mt-1 text-rose-500">שגיאה: {etl.detail}</div>
+              )}
+              {etl.detail && etl.status === 'success' && (
+                <div className="mt-1 text-emerald-600">{etl.detail}</div>
+              )}
             </div>
           )}
         </div>

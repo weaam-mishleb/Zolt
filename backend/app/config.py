@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password_hash: str = ""  # bcrypt hash; empty ⇒ login disabled
 
+    # ── GitHub Actions ETL dispatch ──────────────────────────
+    # When GH_PAT + GH_REPO are set, the admin "run ETL" button dispatches the
+    # heavy ETL workflow to GitHub Actions (the free Render instance has only
+    # 512MB RAM). When unset (local dev), the ETL runs in-process instead.
+    gh_pat: str = ""                 # fine-grained PAT, Actions: Read and write
+    gh_repo: str = ""                # "owner/repo", e.g. weaam-mishleb/Zolt
+    gh_workflow: str = "etl.yml"     # workflow file name under .github/workflows/
+    gh_ref: str = "main"             # branch the workflow runs on
+
     # ── Kaggle / automated ETL ───────────────────────────────
     # Dataset reference "owner/dataset-name" on Kaggle.
     kaggle_dataset: str = "erlichsefi/israeli-supermarkets-data"

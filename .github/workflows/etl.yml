@@ -14,6 +14,12 @@ on:
       data_tag:
         description: "Release tag holding the *.csv.gz price files"
         default: "dataset-v1"
+      job_id:
+        description: "etl_jobs row id to report progress into (set by the admin dispatch; leave empty to create a new row)"
+        default: ""
+      full:
+        description: "Load the full price catalog (true/false)"
+        default: "true"
 
 permissions:
   contents: read
@@ -56,8 +62,13 @@ jobs:
           DB_SSL: "true"                # Railway MySQL needs a TLS handshake
         run: python -m scripts.init_db
 
-      - name: Run full ETL → cloud DB
+      - name: Run ETL → cloud DB
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DB_SSL: "true"
-        run: python -m etl.run --full --batch-size 1000   # fast low-latency link → larger batches
+          ETL_JOB_ID: ${{ inputs.job_id }}   # progress reported into this etl_jobs row
+        shell: bash
+        run: |
+          FLAGS="--batch-size 1000"   # fast low-latency link → larger batches
+          if [ "${{ inputs.full }}" != "false" ]; then FLAGS="$FLAGS --full"; fi
+          python -m etl.run $FLAGS

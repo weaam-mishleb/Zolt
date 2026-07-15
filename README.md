@@ -165,8 +165,8 @@ SPA config, a `python -m scripts.init_db` schema helper, and a step-by-step chec
 | `GET /stores/cities` | Distinct cities (for the combobox) |
 | `POST /basket/compare` | Compare a basket → ranked branches, winner, missing items |
 | `POST /admin/login` | Admin login (bcrypt) → JWT (24h) |
-| `POST /admin/etl/run` | 🔒 Trigger the ETL in the background (BackgroundTasks) |
-| `GET /admin/etl/status` · `GET /admin/scheduler` | 🔒 ETL / scheduler state |
+| `POST /admin/etl/run` | 🔒 Dispatch the ETL to GitHub Actions (`workflow_dispatch`); in-process fallback in dev |
+| `GET /admin/etl/status` · `GET /admin/scheduler` | 🔒 Live ETL progress % (from `etl_jobs`) / scheduler state |
 | `GET /health` | Liveness + DB connectivity |
 
 ---

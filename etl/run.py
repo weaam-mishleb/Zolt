@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
+import os
 import sys
 import time
 from collections import Counter
@@ -33,16 +35,21 @@ from .normalize import PRODUCT_FIELDS, normalize_price, normalize_store
 _EMPTY = ("", "''", '""')
 
 
-def _read_csv_chunks(path: Path, chunksize: int):
+def _read_csv_chunks(path: Path, chunksize: int, on_progress=None):
     """Yield lists of row-dicts using the stdlib csv module (bounded, low memory).
 
     All columns stay as strings (barcodes / zero-padded codes preserved).
     Malformed lines are skipped, and the grouped identity columns are
     forward-filled across rows AND chunk boundaries (a store block may straddle
     a chunk), so the chunk size never affects correctness.
+
+    `on_progress(bytes_pos)` is called after each yielded chunk with the raw
+    byte offset consumed so far (read-ahead makes it slightly ahead of the
+    decoded position — close enough for a progress percentage).
     """
     carry: dict[int, str] = {}
-    with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
+    with open(path, "rb") as raw:
+        fh = io.TextIOWrapper(raw, encoding="utf-8-sig", errors="replace", newline="")
         reader = csv.reader(fh)
         try:
             header = next(reader)
@@ -69,9 +76,13 @@ def _read_csv_chunks(path: Path, chunksize: int):
             batch.append({header[i]: row[i] for i in range(ncol)})
             if len(batch) >= chunksize:
                 yield batch
+                if on_progress is not None:
+                    on_progress(raw.tell())
                 batch = []
         if batch:
             yield batch
+        if on_progress is not None:
+            on_progress(raw.tell())
 
 
 # ──────────────────────────── stores ────────────────────────────
@@ -112,19 +123,33 @@ def load_prices(
     chunksize: int,
     limit_rows: int | None,
     stats: Counter,
+    progress=None,
 ) -> None:
     product_ids: dict[str, int] = {}  # barcode -> id (synthetic in dry-run)
     next_pid = 0
 
+    # Byte-based progress: prices are ~99% of the work, so bytes consumed
+    # across all price files are mapped onto the 1→99% range.
+    paths = {slug: price_file(data_dir, slug, full=full) for slug in chains}
+    total_bytes = sum(p.stat().st_size for p in paths.values() if p.exists()) or 1
+    bytes_before = 0
+
     for slug in chains:
-        path = price_file(data_dir, slug, full=full)
+        path = paths[slug]
         if not path.exists():
             print(f"  ! missing price file: {path.name} — skipping {slug}", file=sys.stderr)
             continue
 
+        on_progress = None
+        if progress is not None:
+            base, label = bytes_before, f"טוען מחירים: {CHAINS[slug]}"
+            on_progress = lambda pos, base=base, label=label: progress.update(  # noqa: E731
+                1 + int((base + pos) / total_bytes * 98), phase=label
+            )
+
         seen = 0
         chain_prices = 0
-        for batch in _read_csv_chunks(path, chunksize):
+        for batch in _read_csv_chunks(path, chunksize, on_progress):
             price_rows = []
             products: dict[str, dict] = {}
             for rec in batch:
@@ -176,6 +201,7 @@ def load_prices(
                 break
 
         print(f"  · {slug:<10} rows={seen:<9} prices upserted={chain_prices}")
+        bytes_before += path.stat().st_size
 
     stats["products"] = len(product_ids)
 
@@ -200,28 +226,55 @@ def run(args: argparse.Namespace) -> None:
             retry_max_delay=getattr(args, "retry_max_delay", 60.0),
         )
 
+    # Track this run in etl_jobs so the admin panel can poll a live progress %.
+    # A dispatched run (GitHub Actions) attaches to the row the backend created
+    # (--job-id / $ETL_JOB_ID); otherwise a fresh row is created here.
+    job = None
+    if loader is not None:
+        from .progress import ProgressReporter, create_job
+
+        job_id = getattr(args, "job_id", None)
+        if job_id is None:
+            job_id = create_job(engine, source="cli", full=args.full)
+        job = ProgressReporter(engine, job_id)
+        job.start(phase="מאתחל את הריצה")
+        print(f"  · progress tracked in etl_jobs id={job_id}")
+
     print(f"Zolt ETL — data_dir={data_dir}  chains={chains}  "
           f"{'DRY-RUN' if dry else 'DB'}  {'full' if args.full else 'snapshot'}")
     t0 = time.time()
 
-    print("Stores:")
-    store_map = load_stores(data_dir, chains, loader)
-    print(f"  → stores in map: {len(store_map)}")
-
-    print("Prices:")
     stats: Counter = Counter()
-    load_prices(
-        data_dir,
-        chains,
-        loader,
-        store_map,
-        full=args.full,
-        chunksize=args.chunksize,
-        limit_rows=args.limit_rows,
-        stats=stats,
-    )
+    try:
+        print("Stores:")
+        if job:
+            job.update(1, "טוען סניפים")
+        store_map = load_stores(data_dir, chains, loader)
+        print(f"  → stores in map: {len(store_map)}")
+
+        print("Prices:")
+        load_prices(
+            data_dir,
+            chains,
+            loader,
+            store_map,
+            full=args.full,
+            chunksize=args.chunksize,
+            limit_rows=args.limit_rows,
+            stats=stats,
+            progress=job,
+        )
+    except Exception as exc:
+        if job:
+            job.finish(False, f"{type(exc).__name__}: {exc}")
+        raise
 
     dt = time.time() - t0
+    if job:
+        job.finish(
+            True,
+            f"{stats['prices']:,} prices · {stats['products']:,} products · {dt:.0f}s",
+        )
     print("─" * 52)
     print(f"  rows read       : {stats['rows_read']:,}")
     print(f"  rows skipped    : {stats['rows_bad']:,} (unparsable)")
@@ -249,6 +302,7 @@ def run_pipeline(
     max_retries: int = 12,
     retry_base_delay: float = 1.0,
     retry_max_delay: float = 60.0,
+    job_id: int | None = None,
 ) -> None:
     """Programmatic entry point (used by the scheduler / admin trigger)."""
     run(
@@ -263,6 +317,7 @@ def run_pipeline(
             max_retries=max_retries,
             retry_base_delay=retry_base_delay,
             retry_max_delay=retry_max_delay,
+            job_id=job_id,
         )
     )
 
@@ -283,7 +338,13 @@ def main() -> None:
                    help="initial backoff seconds (doubles each retry)")
     p.add_argument("--retry-max-delay", type=float, default=60.0,
                    help="cap for the exponential backoff, seconds")
-    run(p.parse_args())
+    p.add_argument("--job-id", type=int, default=None,
+                   help="existing etl_jobs row to report progress into "
+                        "(default: $ETL_JOB_ID if set, else a new row is created)")
+    args = p.parse_args()
+    if args.job_id is None and os.environ.get("ETL_JOB_ID", "").strip():
+        args.job_id = int(os.environ["ETL_JOB_ID"])
+    run(args)
 
 
 if __name__ == "__main__":
