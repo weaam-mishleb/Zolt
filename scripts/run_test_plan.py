@@ -180,9 +180,10 @@ def tc10():
     tok = r.json()["access_token"]
     claims = jwt.decode(tok, settings.jwt_secret, algorithms=["HS256"])
     hours = round((claims["exp"] - claims["iat"]) / 3600, 2)
-    ok = bool(tok) and abs(hours - 1.0) < 0.05
-    record("TC-10", "Admin login → JWT (1h)", "PASS" if ok else "FAIL",
-           f"200 + valid JWT, expiry={hours}h")
+    expected = settings.jwt_expire_hours
+    ok = bool(tok) and abs(hours - expected) < 0.05
+    record("TC-10", f"Admin login → JWT ({expected}h)", "PASS" if ok else "FAIL",
+           f"200 + valid JWT, expiry={hours}h (expected {expected}h)")
 
 
 # ── TC-5: ETL memory (subprocess + /usr/bin/time) ───────────────────────────
