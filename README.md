@@ -198,7 +198,7 @@ python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...T
 
 ---
 
-## 📁 Project structure
+## 📁 Project Structure
 
 ```
 Zolt/
