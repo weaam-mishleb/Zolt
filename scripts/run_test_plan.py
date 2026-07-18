@@ -52,19 +52,20 @@ def tc1(db):
     items = [{"product_id": p.id, "quantity": q} for p, q in zip(prods, qty)]
     r = client.post("/basket/compare", json={"city": "תל אביב", "items": items})
     d = r.json()
+    # complete stores are returned first, ranked cheapest-first — verify it
+    complete_totals = [s["total"] for s in d["stores"] if s["is_complete"]]
     ok = (
         r.status_code == 200
-        and d["stores"]
+        and bool(d["stores"])
         and all("total" in s for s in d["stores"])
-        and [s["total"] for s in d["stores"]] == sorted(s["total"] for s in d["stores"] if s["is_complete"])
-        or r.status_code == 200
+        and complete_totals == sorted(complete_totals)
     )
     totals = [s["total"] for s in d["stores"][:3]]
     record(
         "TC-1",
         "Basket total (valid products)",
-        "PASS" if r.status_code == 200 and d["stores"] else "FAIL",
-        f"200, {d['store_count']} stores, sample totals={totals}, winner={d['winner_store_id']}",
+        "PASS" if ok else "FAIL",
+        f"{r.status_code}, {d['store_count']} stores, sample totals={totals}, winner={d['winner_store_id']}",
     )
 
 

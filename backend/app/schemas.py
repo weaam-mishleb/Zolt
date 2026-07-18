@@ -71,6 +71,7 @@ class StoreComparison(BaseModel):
     missing_product_ids: list[int]
     is_complete: bool                    # carries every requested product
     rank: int | None = None              # 1 = cheapest complete store; None if incomplete
+    pct_above_cheapest: float | None = None  # % gap vs the cheapest complete basket (FR-4.2)
     items: list[StoreItemPrice]
 
 
