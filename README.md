@@ -191,6 +191,8 @@ python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...T
 ```
 
 - **33** unit tests (comparison ranking, fuzzy tokenization, city normalization).
+- **Full test documentation** — every test, what it verifies, SRS traceability and latest
+  verified results (incl. the measured **89 MB** ETL peak): **[docs/TESTING.md](docs/TESTING.md)**.
 - **10/10** Test-Plan cases — incl. negative-quantity rejection (`400`), upsert-without-duplicate,
   malformed-row skipping, graceful no-stores response, JWT auth, and the **<100 MB ETL** budget.
 
