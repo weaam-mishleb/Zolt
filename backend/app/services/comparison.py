@@ -245,6 +245,7 @@ def build_comparison(
                 "missing_product_ids": missing,
                 "is_complete": not missing,
                 "rank": None,
+                "pct_above_cheapest": None,
                 "items": items_out,
             }
         )
@@ -255,6 +256,12 @@ def build_comparison(
     complete.sort(key=lambda s: s["total"])
     for i, s in enumerate(complete, start=1):
         s["rank"] = i
+    # price gap (%) vs the cheapest complete basket (FR-4.2); incomplete stores
+    # keep None — a partial total is not comparable.
+    if complete and complete[0]["total"]:
+        cheapest = complete[0]["total"]
+        for s in complete:
+            s["pct_above_cheapest"] = round((s["total"] - cheapest) / cheapest * 100, 1)
     # show the "closest to complete, then cheapest" incomplete stores first
     incomplete.sort(key=lambda s: (s["missing_count"], s["total"]))
 

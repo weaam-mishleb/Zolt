@@ -54,6 +54,11 @@ def test_winner_is_cheapest_complete_and_incomplete_excluded():
     assert stores[20]["rank"] == 1 and stores[20]["total"] == 18.0
     assert stores[10]["rank"] == 2 and stores[10]["total"] == 21.0
 
+    # % gap vs the cheapest complete basket (FR-4.2): (21-18)/18 = 16.7%
+    assert stores[20]["pct_above_cheapest"] == 0.0
+    assert stores[10]["pct_above_cheapest"] == 16.7
+    assert stores[30]["pct_above_cheapest"] is None  # partial total — not comparable
+
     # incomplete store: shown, unranked, marked missing
     o = stores[30]
     assert o["rank"] is None

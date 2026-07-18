@@ -138,6 +138,16 @@ def run_etl(
     }
 
 
+@router.get("/etl/jobs", summary="Historical ETL runs, newest first (protected)")
+def etl_jobs(limit: int = 10, admin: str = Depends(get_current_admin)):
+    try:
+        from etl.progress import get_recent_jobs
+
+        return {"jobs": get_recent_jobs(engine, limit=min(max(limit, 1), 50))}
+    except Exception:  # noqa: BLE001 — table missing / DB hiccup → empty history
+        return {"jobs": []}
+
+
 @router.get("/etl/status", summary="ETL run state + live progress % (protected)")
 def etl_status(admin: str = Depends(get_current_admin)):
     """Merged view: the latest etl_jobs row (written live by the run itself,

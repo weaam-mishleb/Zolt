@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { adminLogin, getEtlStatus, getSchedulerStatus, runEtl } from '../api'
+import { adminLogin, getEtlJobs, getEtlStatus, getSchedulerStatus, runEtl } from '../api'
 
 const TOKEN_KEY = 'zolt.admin.token'
 
@@ -92,6 +92,7 @@ function LoginCard({ onToken }) {
 function Dashboard({ token, onLogout }) {
   const [sched, setSched] = useState(null)
   const [etl, setEtl] = useState(null)
+  const [jobs, setJobs] = useState([])
   const [full, setFull] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -99,13 +100,17 @@ function Dashboard({ token, onLogout }) {
   const loadStatus = () => {
     getSchedulerStatus(token).then(setSched).catch(() => {})
     getEtlStatus(token).then(setEtl).catch((e) => e.status === 401 && onLogout())
+    getEtlJobs(token).then((r) => setJobs(r.jobs || [])).catch(() => {})
   }
 
   useEffect(loadStatus, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // poll while an ETL run is in progress
+  // poll while an ETL run is in progress; refresh the history when it ends
   useEffect(() => {
-    if (!etl?.running) return
+    if (!etl?.running) {
+      getEtlJobs(token).then((r) => setJobs(r.jobs || [])).catch(() => {})
+      return
+    }
     const id = setInterval(() => getEtlStatus(token).then(setEtl).catch(() => {}), 3000)
     return () => clearInterval(id)
   }, [etl?.running, token])
@@ -230,6 +235,38 @@ function Dashboard({ token, onLogout }) {
           )}
         </div>
       </div>
+
+      {/* ETL run history (FR-5.4) */}
+      {jobs.length > 0 && (
+        <div className="animate-in mt-5 rounded-3xl border border-slate-200/70 bg-white p-6 shadow-xl shadow-slate-900/5">
+          <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">🗂️ היסטוריית ריצות ETL</h3>
+          <ul className="mt-4 space-y-2 text-sm">
+            {jobs.map((j) => (
+              <li key={j.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold text-white ${
+                      j.status === 'success' ? 'bg-emerald-500'
+                      : j.status === 'failed' ? 'bg-rose-500'
+                      : 'bg-amber-500'
+                    }`}
+                  >
+                    {j.status === 'success' ? 'הצליח' : j.status === 'failed' ? 'נכשל' : `${j.progress}%`}
+                  </span>
+                  <span className="font-medium text-slate-700">ריצה #{j.id}</span>
+                  <span className="text-xs text-slate-400">
+                    {j.source === 'github' ? 'GitHub Actions' : j.source} · {j.is_full ? 'קטלוג מלא' : 'snapshot'}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {j.started_at ? j.started_at.replace('T', ' ').slice(0, 16) : '—'}
+                  {j.detail && <span className="mr-2 text-slate-500"> · {j.detail}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Shell>
   )
 }

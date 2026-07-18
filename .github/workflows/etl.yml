@@ -9,6 +9,8 @@ name: ETL → Cloud DB
 # One-time setup: create a release (default tag "dataset-v1") and upload the 3
 # files archive/price_full_file_*.csv.gz (see DEPLOYMENT.md).
 on:
+  schedule:
+    - cron: "0 0 * * 0"   # Sunday 00:00 UTC ≈ 03:00 Israel — weekly refresh (SRS FR-1.4)
   workflow_dispatch:
     inputs:
       data_tag:

@@ -49,3 +49,7 @@ export function runEtl(token, full = false) {
 export function getEtlStatus(token) {
   return http('/admin/etl/status', auth(token))
 }
+
+export function getEtlJobs(token, limit = 5) {
+  return http(`/admin/etl/jobs?limit=${limit}`, auth(token))
+}

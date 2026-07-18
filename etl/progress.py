@@ -40,6 +40,19 @@ def get_latest_job(engine: Engine) -> dict | None:
         return dict(row) if row else None
 
 
+def get_recent_jobs(engine: Engine, limit: int = 10) -> list[dict]:
+    """Recent job rows, newest first — the admin history view (SRS FR-5.4)."""
+    sql = text(
+        """
+        SELECT id, source, status, progress, phase, is_full, detail,
+               started_at, finished_at, updated_at
+        FROM etl_jobs ORDER BY id DESC LIMIT :limit
+        """
+    )
+    with engine.connect() as conn:
+        return [dict(r) for r in conn.execute(sql, {"limit": limit}).mappings().all()]
+
+
 def mark_failed(engine: Engine, job_id: int, detail: str) -> None:
     """Fail a job from outside the run (e.g. the workflow dispatch call errored)."""
     with engine.begin() as conn:

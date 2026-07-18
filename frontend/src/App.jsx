@@ -71,7 +71,9 @@ export default function App() {
     )
 
   const remove = (id) => setBasket((prev) => prev.filter((it) => it.product.id !== id))
-  const clear = () => setBasket([])
+  const clear = () => {
+    if (window.confirm('לרוקן את כל הסל?')) setBasket([])
+  }
 
   async function handleCompare() {
     if (!basket.length || !city) return

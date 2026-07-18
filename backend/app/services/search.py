@@ -21,19 +21,38 @@ def _boolean_expr(q: str) -> str:
 
 
 def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
-    """Search products by name, returning one entry per distinct name.
+    """Search products by name, barcode or manufacturer (FR-2.1), one entry per
+    distinct name.
 
     Different chains use different barcodes for the same item, so `products`
     holds several rows with the same `name`. We `GROUP BY name` (picking the
     lowest id as the representative) so the autocomplete shows no duplicates.
 
+    Barcode path: an all-digit query is treated as a barcode prefix (uses the
+    UNIQUE(barcode) index).
     Primary path: FULLTEXT boolean search with prefix wildcards (fast, ranked).
-    Fallback: LIKE substring match — covers very short queries and tokens that
-    are below the FULLTEXT minimum token length.
+    Fallback: LIKE substring match on name OR manufacturer — covers very short
+    queries and tokens below the FULLTEXT minimum token length.
     """
     q = q.strip()
     if not q:
         return []
+
+    if q.isdigit() and len(q) >= 4:
+        bc_sql = text(
+            """
+            SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
+                   MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
+                   MIN(unit_of_measure) AS unit_of_measure
+            FROM products
+            WHERE barcode LIKE :prefix
+            GROUP BY name
+            ORDER BY CHAR_LENGTH(name) ASC
+            LIMIT :limit
+            """
+        )
+        rows = db.execute(bc_sql, {"prefix": f"{q}%", "limit": limit}).mappings().all()
+        return [dict(r) for r in rows]
 
     expr = _boolean_expr(q)
     if expr:
@@ -61,7 +80,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
                MIN(unit_of_measure) AS unit_of_measure
         FROM products
-        WHERE name LIKE :contains
+        WHERE name LIKE :contains OR manufacturer LIKE :contains
         GROUP BY name
         ORDER BY (name LIKE :prefix) DESC, CHAR_LENGTH(name) ASC
         LIMIT :limit
