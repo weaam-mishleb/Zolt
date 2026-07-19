@@ -43,7 +43,8 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
             """
             SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
                    MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
-                   MIN(unit_of_measure) AS unit_of_measure
+                   MIN(unit_of_measure) AS unit_of_measure,
+                   MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted
             FROM products
             WHERE barcode LIKE :prefix
             GROUP BY name
@@ -61,6 +62,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
             SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
                    MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
                    MIN(unit_of_measure) AS unit_of_measure,
+                   MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted,
                    MAX(MATCH(name) AGAINST (:expr IN BOOLEAN MODE)) AS score
             FROM products
             WHERE MATCH(name) AGAINST (:expr IN BOOLEAN MODE)
@@ -78,7 +80,8 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
         """
         SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
                MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
-               MIN(unit_of_measure) AS unit_of_measure
+               MIN(unit_of_measure) AS unit_of_measure,
+               MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted
         FROM products
         WHERE name LIKE :contains OR manufacturer LIKE :contains
         GROUP BY name

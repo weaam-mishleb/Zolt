@@ -62,17 +62,30 @@ def prominent_tokens(name: str | None, limit: int = 3) -> list[str]:
 
 
 _DIGITS_RE = re.compile(r"\d+")
+_PACK_RE = re.compile(r"(\d+)\s*[*x×X]\s*(\d+)")
 
 
 def size_tokens(name: str | None, limit: int = 2) -> list[str]:
-    """Numeric size/quantity tokens (>=2 digits) that distinguish, e.g., a
-    10-pack from an 80g single. 'מארז במבה 10*25 גרם' → ['10', '25']."""
+    """Numeric size/quantity tokens that distinguish, e.g., a 10-pack from an
+    80g single. 'מארז במבה 10*25 גרם' → ['10', '25'].
+
+    Pack patterns (count×unit, e.g. '4*55גרם') keep BOTH numbers even when the
+    count is a single digit — otherwise a 4-pack's signature collapses onto the
+    single bag's ('4*55' → ['55']) and the multipack price hijacks the
+    comparison. Standalone single digits stay ignored ('חלב 3% 1 ליטר' → [])."""
+    text_ = name or ""
     out: list[str] = []
-    for n in _DIGITS_RE.findall(name or ""):
-        if len(n) >= 2 and n not in out:  # FULLTEXT min token size is 2
+
+    def _add(n: str) -> None:
+        if n not in out and len(out) < limit:
             out.append(n)
-        if len(out) >= limit:
-            break
+
+    for m in _PACK_RE.finditer(text_):
+        _add(m.group(1))
+        _add(m.group(2))
+    for n in _DIGITS_RE.findall(text_):
+        if len(n) >= 2:  # FULLTEXT min token size is 2
+            _add(n)
     return out
 
 
@@ -94,6 +107,18 @@ def _same_name_ids(db: Session, norm_name: str) -> list[int]:
     return [r[0] for r in rows]
 
 
+def _size_filter(rows: list, sizes: list[str]) -> list[int]:
+    """Keep only candidates whose OWN size signature equals the query's.
+
+    The FULLTEXT/LIKE match is one-directional (candidate must contain the
+    query's numbers) — so a 4-pack '4*55גרם' still matches a '55 גר' query.
+    Comparing full signatures both ways rejects it (['4','55'] ≠ ['55'])."""
+    if not sizes:
+        return [r[0] for r in rows]
+    want = set(sizes)
+    return [r[0] for r in rows if set(size_tokens(r[1])) == want]
+
+
 def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
     """Strict fuzzy match: require EVERY brand word (prefix) AND every size token.
 
@@ -108,7 +133,7 @@ def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
     rows = db.execute(
         text(
             """
-            SELECT id FROM products
+            SELECT id, name FROM products
             WHERE MATCH(name) AGAINST (:expr IN BOOLEAN MODE)
             LIMIT :cap
             """
@@ -116,7 +141,7 @@ def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
         {"expr": expr, "cap": _MATCH_CAP},
     ).all()
     if rows:
-        return [r[0] for r in rows]
+        return _size_filter(rows, sizes)
 
     # Precise LIKE fallback: require ALL tokens as substrings (not just one).
     tokens = brand + sizes
@@ -124,9 +149,9 @@ def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
     params = {f"t{i}": f"%{tokens[i]}%" for i in range(len(tokens))}
     params["cap"] = _MATCH_CAP
     rows = db.execute(
-        text(f"SELECT id FROM products WHERE {clauses} LIMIT :cap"), params
+        text(f"SELECT id, name FROM products WHERE {clauses} LIMIT :cap"), params
     ).all()
-    return [r[0] for r in rows]
+    return _size_filter(rows, sizes)
 
 
 def _money(value: Decimal | None) -> float | None:

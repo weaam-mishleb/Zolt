@@ -2,6 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { searchProducts } from '../api'
 import { useDebounce } from '../hooks/useDebounce'
 
+// "55 גרם" / "1 ק"ג" — package size from the feed, so generic butcher-counter
+// names ("בשר אדום טרי") become distinguishable in the dropdown.
+function sizeLabel(p) {
+  const q = p.quantity != null ? parseFloat(p.quantity) : null
+  const qty = q && q > 0 ? (Number.isInteger(q) ? String(q) : q.toFixed(1)) : ''
+  return [qty, p.unit_qty || ''].filter(Boolean).join(' ').trim() || null
+}
+
 export default function SearchBar({ onAdd }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -83,8 +91,12 @@ export default function SearchBar({ onAdd }) {
               >
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-slate-800">{p.name}</span>
-                  {p.manufacturer && (
-                    <span className="block truncate text-xs text-slate-400">{p.manufacturer}</span>
+                  {(p.manufacturer || sizeLabel(p) || p.is_weighted) && (
+                    <span className="block truncate text-xs text-slate-400">
+                      {[p.manufacturer, sizeLabel(p), p.is_weighted ? '⚖️ במשקל' : null]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
                   )}
                 </span>
                 <span className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white opacity-90 transition group-hover:opacity-100">

@@ -13,6 +13,8 @@ class ProductOut(BaseModel):
     manufacturer: str | None = None
     unit_qty: str | None = None
     unit_of_measure: str | None = None
+    quantity: float | None = None        # package size, e.g. 55 (גרם)
+    is_weighted: bool | None = None      # sold by weight (butcher/produce counter)
 
 
 class StoreOut(BaseModel):

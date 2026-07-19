@@ -138,6 +138,12 @@ def test_size_tokens_distinguish_multipack_from_single():
     assert size_tokens("חלב 3% 1 ליטר") == []          # single-digit sizes ignored (<2 chars)
     assert size_tokens("מארז 10*25*50 גרם") == ["10", "25"]  # capped at 2, de-duped
 
+    # pack patterns keep the single-digit count: a 4-pack must NOT share the
+    # single bag's signature (the real-world 'ביסלי גריל' multipack hijack)
+    assert size_tokens("ביסלי גריל 4*55גרם א") == ["4", "55"]
+    assert size_tokens("ביסלי גריל 55 גר") == ["55"]
+    assert size_tokens("ביסלי גריל 4*55גרם א") != size_tokens("ביסלי גריל 55 גר")
+
 
 def test_prominent_tokens_skips_sizes_units_and_stopwords():
     assert prominent_tokens("קוקה קולה שישיה 1.5 ליטר") == ["קוקה", "קולה"]
