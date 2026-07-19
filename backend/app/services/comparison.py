@@ -166,6 +166,43 @@ def _select_branches(ordered: list[dict], limit: int) -> list[dict]:
     return chosen
 
 
+def _dedup_twin_stores(result_stores: list[dict]) -> list[dict]:
+    """Collapse duplicate feed entries for the same physical branch.
+
+    The chains' own store files sometimes publish TWO store codes for one
+    physical branch (e.g. Shufersal 'BE אריאל' under codes 639 and 787 — one
+    with no address and a stale, thinner price list), so the comparison showed
+    the same branch twice, occasionally with outdated prices.
+
+    Twins = same (chain_id, city, store_name). They are kept apart only when
+    every entry carries its own distinct real address (genuinely two branches,
+    e.g. two same-named stores along one long street). The surviving
+    representative is the richest entry: most basket items found, then the one
+    with an address, then the cheaper total.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for s in result_stores:
+        key = (s["chain_id"], s["city"], (s["store_name"] or "").strip())
+        groups.setdefault(key, []).append(s)
+
+    out: list[dict] = []
+    for group in groups.values():
+        if len(group) > 1:
+            addresses = {(s["address"] or "").strip() for s in group}
+            addresses.discard("")
+            if len(addresses) < len(group):  # not all distinct+real → collapse
+                group.sort(
+                    key=lambda s: (
+                        -s["found_count"],
+                        not (s["address"] or "").strip(),
+                        s["total"],
+                    )
+                )
+                group = group[:1]
+        out.extend(group)
+    return out
+
+
 def build_comparison(
     city: str,
     pids: list[int],
@@ -249,6 +286,10 @@ def build_comparison(
                 "items": items_out,
             }
         )
+
+    # collapse duplicate feed entries for the same physical branch (stale twin
+    # store codes in the source files) before ranking
+    result_stores = _dedup_twin_stores(result_stores)
 
     # complete stores compete for the winner; incomplete are shown but unranked
     complete = [s for s in result_stores if s["is_complete"]]

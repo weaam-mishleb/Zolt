@@ -12,7 +12,7 @@
 [![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
-[![Tests](https://img.shields.io/badge/unit%20tests-33%20passing-3FB950)](#-testing)
+[![Tests](https://img.shields.io/badge/unit%20tests-35%20passing-3FB950)](#-testing)
 [![Test Plan](https://img.shields.io/badge/test%20plan-10%2F10-3FB950)](#-testing)
 
 A modern, full-stack, **RTL** web platform that compares a live shopping basket across
@@ -186,11 +186,11 @@ Shufersal 71% · Rami Levy 24% · Osher Ad 5%.
 ## 🧪 Testing
 
 ```bash
-make test                          # 33 backend unit tests
+make test                          # 35 backend unit tests
 python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...TC-10)
 ```
 
-- **33** unit tests (comparison ranking, fuzzy tokenization, city normalization).
+- **35** unit tests (comparison ranking, twin-store dedup, fuzzy tokenization, city normalization).
 - **Full test documentation** — every test, what it verifies, SRS traceability and latest
   verified results (incl. the measured **89 MB** ETL peak): **[docs/TESTING.md](docs/TESTING.md)**.
 - **10/10** Test-Plan cases — incl. negative-quantity rejection (`400`), upsert-without-duplicate,

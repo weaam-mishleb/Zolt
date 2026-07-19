@@ -147,6 +147,39 @@ def test_prominent_tokens_skips_sizes_units_and_stopwords():
     assert prominent_tokens("אבא אמא ילד בית גן") == ["אבא", "אמא", "ילד"]  # capped at 3
 
 
+def test_phantom_twin_store_is_collapsed():
+    # The feed sometimes publishes two store codes for one physical branch
+    # (e.g. 'BE אריאל' 639/787): same chain+city+name, but the phantom has no
+    # address, fewer items and a stale (cheaper) price — it must be collapsed
+    # into the real branch, and its stale price must NOT win.
+    pids = [1, 2]
+    qty = {1: Decimal("1"), 2: Decimal("1")}
+    real1 = {**_row(10, "שופרסל", 1, 5, name="BE אריאל"), "chain_id": "729", "address": "הבנאי 3"}
+    real2 = {**_row(10, "שופרסל", 2, 5, name="BE אריאל"), "chain_id": "729", "address": "הבנאי 3"}
+    phantom = {**_row(11, "שופרסל", 1, 3, name="BE אריאל"), "chain_id": "729", "address": None}
+
+    res = build_comparison(CITY, pids, qty, PRODUCTS, [real1, real2, phantom])
+
+    assert res["store_count"] == 1                     # twin collapsed
+    assert res["stores"][0]["store_id"] == 10          # the real branch survives
+    assert res["winner_store_id"] == 10
+    assert res["stores"][0]["total"] == 10.0           # not costed with the stale 3.0
+
+
+def test_same_name_branches_with_distinct_addresses_are_kept():
+    # Two same-named branches WITH two real, different addresses are genuinely
+    # two stores (e.g. a long street) — they must not be merged.
+    pids = [1]
+    qty = {1: Decimal("1")}
+    a = {**_row(20, "רמי לוי", 1, 5, name="בן יהודה"), "chain_id": "730", "address": "בן יהודה 10"}
+    b = {**_row(21, "רמי לוי", 1, 6, name="בן יהודה"), "chain_id": "730", "address": "בן יהודה 200"}
+
+    res = build_comparison(CITY, pids, qty, PRODUCTS, [a, b])
+
+    assert res["store_count"] == 2
+    assert {s["store_id"] for s in res["stores"]} == {20, 21}
+
+
 def test_quantity_multiplies_line_total():
     pids = [1]
     qty = {1: Decimal("3")}

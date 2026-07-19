@@ -76,6 +76,9 @@ export default function ComparisonTable({ result }) {
               <p className="text-lg font-black text-emerald-900">
                 {winner.chain_name} · {storeLabel(winner)}
               </p>
+              {winner.address && (
+                <p className="text-xs text-emerald-700/70">📍 {winner.address}</p>
+              )}
             </div>
           </div>
           <div className="text-3xl font-black text-emerald-700">{ils.format(winner.total)}</div>
@@ -117,6 +120,7 @@ export default function ComparisonTable({ result }) {
                       )}
                       <span className="font-bold text-slate-800">{s.chain_name}</span>
                       <span className="text-xs text-slate-400">{storeLabel(s)}</span>
+                      {s.address && <span className="text-[10px] text-slate-300">📍 {s.address}</span>}
                       {s.rank && <span className="text-[11px] text-slate-300">מקום {s.rank}</span>}
                       {s.pct_above_cheapest > 0 && (
                         <span className="text-[11px] font-semibold text-rose-400">
