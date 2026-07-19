@@ -15,6 +15,7 @@ class ProductOut(BaseModel):
     unit_of_measure: str | None = None
     quantity: float | None = None        # package size, e.g. 55 (גרם)
     is_weighted: bool | None = None      # sold by weight (butcher/produce counter)
+    availability: int | None = None      # branches carrying it (search ranking + UI)
 
 
 class StoreOut(BaseModel):

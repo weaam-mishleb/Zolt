@@ -38,17 +38,23 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     if not q:
         return []
 
+    # Ranking: staples first. `availability` = number of branches carrying the
+    # product — 'חלב 3% תנובה' (441 branches) must outrank 'מקציף חלב', which a
+    # shortest-name-first sort used to bury. Prefix matches ("חלב…") still beat
+    # substring matches ("שוקולד חלב"), so the adjective 'חלבי' pollution sinks.
     if q.isdigit() and len(q) >= 4:
         bc_sql = text(
             """
-            SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
-                   MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
-                   MIN(unit_of_measure) AS unit_of_measure,
-                   MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted
-            FROM products
-            WHERE barcode LIKE :prefix
-            GROUP BY name
-            ORDER BY CHAR_LENGTH(name) ASC
+            SELECT MIN(p.id) AS id, MIN(p.barcode) AS barcode, p.name,
+                   MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
+                   MIN(p.unit_of_measure) AS unit_of_measure,
+                   MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
+                   COUNT(pr.id) AS availability
+            FROM products p
+            LEFT JOIN prices pr ON pr.product_id = p.id
+            WHERE p.barcode LIKE :prefix
+            GROUP BY p.name
+            ORDER BY availability DESC, CHAR_LENGTH(p.name) ASC
             LIMIT :limit
             """
         )
@@ -59,33 +65,40 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     if expr:
         ft_sql = text(
             """
-            SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
-                   MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
-                   MIN(unit_of_measure) AS unit_of_measure,
-                   MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted,
-                   MAX(MATCH(name) AGAINST (:expr IN BOOLEAN MODE)) AS score
-            FROM products
-            WHERE MATCH(name) AGAINST (:expr IN BOOLEAN MODE)
-            GROUP BY name
-            ORDER BY score DESC, CHAR_LENGTH(name) ASC
+            SELECT MIN(p.id) AS id, MIN(p.barcode) AS barcode, p.name,
+                   MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
+                   MIN(p.unit_of_measure) AS unit_of_measure,
+                   MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
+                   COUNT(pr.id) AS availability,
+                   MAX(MATCH(p.name) AGAINST (:expr IN BOOLEAN MODE)) AS score
+            FROM products p
+            LEFT JOIN prices pr ON pr.product_id = p.id
+            WHERE MATCH(p.name) AGAINST (:expr IN BOOLEAN MODE)
+            GROUP BY p.name
+            ORDER BY (p.name LIKE :starts) DESC, availability DESC,
+                     score DESC, CHAR_LENGTH(p.name) ASC
             LIMIT :limit
             """
         )
-        rows = db.execute(ft_sql, {"expr": expr, "limit": limit}).mappings().all()
+        rows = db.execute(
+            ft_sql, {"expr": expr, "starts": f"{q}%", "limit": limit}
+        ).mappings().all()
         if rows:
             return [dict(r) for r in rows]
 
     # Fallback — substring match, ranking exact prefixes first.
     like_sql = text(
         """
-        SELECT MIN(id) AS id, MIN(barcode) AS barcode, name,
-               MIN(manufacturer) AS manufacturer, MIN(unit_qty) AS unit_qty,
-               MIN(unit_of_measure) AS unit_of_measure,
-               MIN(quantity) AS quantity, MAX(is_weighted) AS is_weighted
-        FROM products
-        WHERE name LIKE :contains OR manufacturer LIKE :contains
-        GROUP BY name
-        ORDER BY (name LIKE :prefix) DESC, CHAR_LENGTH(name) ASC
+        SELECT MIN(p.id) AS id, MIN(p.barcode) AS barcode, p.name,
+               MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
+               MIN(p.unit_of_measure) AS unit_of_measure,
+               MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
+               COUNT(pr.id) AS availability
+        FROM products p
+        LEFT JOIN prices pr ON pr.product_id = p.id
+        WHERE p.name LIKE :contains OR p.manufacturer LIKE :contains
+        GROUP BY p.name
+        ORDER BY (p.name LIKE :prefix) DESC, availability DESC, CHAR_LENGTH(p.name) ASC
         LIMIT :limit
         """
     )

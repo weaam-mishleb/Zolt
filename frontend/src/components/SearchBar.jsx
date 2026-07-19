@@ -91,9 +91,14 @@ export default function SearchBar({ onAdd }) {
               >
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-slate-800">{p.name}</span>
-                  {(p.manufacturer || sizeLabel(p) || p.is_weighted) && (
+                  {(p.manufacturer || sizeLabel(p) || p.is_weighted || p.availability > 0) && (
                     <span className="block truncate text-xs text-slate-400">
-                      {[p.manufacturer, sizeLabel(p), p.is_weighted ? '⚖️ במשקל' : null]
+                      {[
+                        p.manufacturer,
+                        sizeLabel(p),
+                        p.is_weighted ? '⚖️ במשקל' : null,
+                        p.availability > 0 ? `ב-${p.availability} סניפים` : null,
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
