@@ -148,22 +148,6 @@ export default function App() {
                 </div>
                 <div className="text-2xl font-black text-slate-800">₪{summary.estimated_total.toFixed(2)}</div>
               </div>
-              {summary.chains?.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  {summary.chains.map((c) => (
-                    <span
-                      key={c.chain_name}
-                      className={`rounded-full px-2.5 py-1 ring-1 ${
-                        c.items_covered === summary.item_count
-                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                          : 'bg-slate-50 text-slate-500 ring-slate-200'
-                      }`}
-                    >
-                      {c.chain_name} · מחזיקה {c.items_covered}/{summary.item_count} מהמוצרים
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
