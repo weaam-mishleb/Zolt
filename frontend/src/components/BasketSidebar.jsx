@@ -3,6 +3,7 @@ import CityCombobox from './CityCombobox.jsx'
 
 export default function BasketSidebar({
   items,
+  summary,
   cities,
   city,
   onCityChange,
@@ -71,6 +72,34 @@ export default function BasketSidebar({
               </li>
             ))}
           </ul>
+        )}
+
+        {/* FR-3.6 — estimated avg cost + per-chain coverage (hidden if unavailable) */}
+        {items.length > 0 && summary?.estimated_total != null && (
+          <div className="mb-3 rounded-2xl bg-slate-50 p-3 text-xs text-slate-500">
+            <div className="flex items-center justify-between">
+              <span>עלות משוערת (ממוצע הרשתות)</span>
+              <span className="text-sm font-bold text-slate-700">
+                ₪{summary.estimated_total.toFixed(2)}
+              </span>
+            </div>
+            {summary.chains?.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {summary.chains.map((c) => (
+                  <span
+                    key={c.chain_name}
+                    className={`rounded-full bg-white px-2 py-0.5 ring-1 ${
+                      c.items_covered === summary.item_count
+                        ? 'text-emerald-700 ring-emerald-200'
+                        : 'text-slate-500 ring-slate-200'
+                    }`}
+                  >
+                    {c.chain_name} {c.items_covered}/{summary.item_count}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {items.length > 0 && (

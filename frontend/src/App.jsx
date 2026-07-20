@@ -3,7 +3,7 @@ import Header from './components/Header.jsx'
 import SearchBar from './components/SearchBar.jsx'
 import BasketSidebar from './components/BasketSidebar.jsx'
 import ComparisonTable from './components/ComparisonTable.jsx'
-import { compareBasket, getCities } from './api'
+import { basketSummary, compareBasket, getCities } from './api'
 
 const STORAGE_KEY = 'zolt.basket'
 
@@ -37,9 +37,29 @@ export default function App() {
     setCompareError('')
   }, [basket, city])
 
+  // FR-3.6 — debounced sidebar summary (estimated avg cost + per-chain
+  // coverage). Best-effort: any failure simply hides the summary line.
+  const [summary, setSummary] = useState(null)
+  useEffect(() => {
+    if (!basket.length) {
+      setSummary(null)
+      return
+    }
+    const t = setTimeout(() => {
+      basketSummary(basket.map((it) => ({ product_id: it.product.id, quantity: it.quantity })))
+        .then(setSummary)
+        .catch(() => setSummary(null))
+    }, 500)
+    return () => clearTimeout(t)
+  }, [basket])
+
   function addProduct(product) {
     setBasket((prev) => {
       const existing = prev.find((it) => it.product.id === product.id)
+      if (!existing && prev.length >= 50) {
+        window.alert('הסל מוגבל ל-50 מוצרים שונים')
+        return prev
+      }
       if (existing) {
         return prev.map((it) =>
           it.product.id === product.id ? { ...it, quantity: it.quantity + 1 } : it,
@@ -148,6 +168,7 @@ export default function App() {
 
         <BasketSidebar
           items={basket}
+          summary={summary}
           cities={cities}
           city={city}
           onCityChange={setCity}

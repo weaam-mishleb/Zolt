@@ -33,6 +33,10 @@ export function compareBasket(city, items) {
   return http('/basket/compare', { method: 'POST', body: JSON.stringify({ city, items }) })
 }
 
+export function basketSummary(items) {
+  return http('/basket/summary', { method: 'POST', body: JSON.stringify({ items }) })
+}
+
 // ── Admin (JWT) ──────────────────────────────────────────
 export function adminLogin(username, password) {
   return http('/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) })

@@ -191,6 +191,60 @@ def _select_branches(ordered: list[dict], limit: int) -> list[dict]:
     return chosen
 
 
+def basket_summary(db: Session, items: list) -> dict:
+    """FR-3.6 — lightweight basket summary for the sidebar: estimated cost
+    (average price of each item across every branch carrying it, × quantity)
+    and per-chain coverage.
+
+    Uses the cheap same-name tier only — deliberately NOT the full tiered
+    comparison — so coverage may under-count fuzzy-only matches but never
+    over-promises what the comparison will find.
+    """
+    qty: dict[int, Decimal] = {}
+    for it in items:
+        qty[it.product_id] = qty.get(it.product_id, Decimal("0")) + Decimal(str(it.quantity))
+    ids = list(qty)
+    if not ids:
+        return {"item_count": 0, "estimated_total": None, "chains": []}
+
+    avg_rows = db.execute(
+        text(
+            """
+            SELECT rep.id AS rid, AVG(pr.price) AS avg_price
+            FROM products rep
+            JOIN products p2 ON p2.name = rep.name
+            JOIN prices pr ON pr.product_id = p2.id
+            WHERE rep.id IN :ids
+            GROUP BY rep.id
+            """
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
+    ).all()
+    est = sum((Decimal(str(avg)) * qty[rid] for rid, avg in avg_rows), Decimal("0"))
+
+    cov_rows = db.execute(
+        text(
+            """
+            SELECT s.chain_name, COUNT(DISTINCT rep.id) AS items_covered
+            FROM products rep
+            JOIN products p2 ON p2.name = rep.name
+            JOIN prices pr ON pr.product_id = p2.id
+            JOIN stores s ON s.id = pr.store_id
+            WHERE rep.id IN :ids
+            GROUP BY s.chain_name
+            ORDER BY s.chain_name
+            """
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
+    ).all()
+
+    return {
+        "item_count": len(ids),
+        "estimated_total": _money(est) if avg_rows else None,
+        "chains": [{"chain_name": c, "items_covered": int(n)} for c, n in cov_rows],
+    }
+
+
 def _dedup_twin_stores(result_stores: list[dict]) -> list[dict]:
     """Collapse duplicate feed entries for the same physical branch.
 

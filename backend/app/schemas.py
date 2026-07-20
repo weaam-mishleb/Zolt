@@ -47,6 +47,21 @@ class BasketCompareRequest(BaseModel):
     items: list[BasketItemIn] = Field(default_factory=list, description="Basket lines")
 
 
+class BasketSummaryRequest(BaseModel):
+    items: list[BasketItemIn] = Field(default_factory=list, description="Basket lines")
+
+
+class BasketSummaryChain(BaseModel):
+    chain_name: str
+    items_covered: int                   # basket items this chain carries (same-name tier)
+
+
+class BasketSummaryResponse(BaseModel):
+    item_count: int
+    estimated_total: float | None = None  # Σ(avg price across branches × qty) — FR-3.6
+    chains: list[BasketSummaryChain] = []
+
+
 class ProductBrief(BaseModel):
     id: int
     name: str | None = None
