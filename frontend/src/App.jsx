@@ -35,23 +35,13 @@ export default function App() {
   useEffect(() => {
     setComparison(null)
     setCompareError('')
+    setSummary(null)
   }, [basket, city])
 
-  // FR-3.6 — debounced sidebar summary (estimated avg cost + per-chain
-  // coverage). Best-effort: any failure simply hides the summary line.
+  // FR-3.6 — basket summary (estimated avg cost + per-chain coverage), fetched
+  // together with the comparison and shown below the results table.
+  // Best-effort: any failure simply hides the block.
   const [summary, setSummary] = useState(null)
-  useEffect(() => {
-    if (!basket.length) {
-      setSummary(null)
-      return
-    }
-    const t = setTimeout(() => {
-      basketSummary(basket.map((it) => ({ product_id: it.product.id, quantity: it.quantity })))
-        .then(setSummary)
-        .catch(() => setSummary(null))
-    }, 500)
-    return () => clearTimeout(t)
-  }, [basket])
 
   function addProduct(product) {
     setBasket((prev) => {
@@ -100,8 +90,10 @@ export default function App() {
     setComparing(true)
     setCompareError('')
     setComparison(null)
+    setSummary(null)
     try {
       const items = basket.map((it) => ({ product_id: it.product.id, quantity: it.quantity }))
+      basketSummary(items).then(setSummary).catch(() => setSummary(null))
       setComparison(await compareBasket(city, items))
     } catch {
       setCompareError('ההשוואה נכשלה — ודאו שהשרת פעיל ונסו שוב.')
@@ -143,6 +135,38 @@ export default function App() {
 
           {comparison && !comparing && <ComparisonTable result={comparison} />}
 
+          {/* FR-3.6 — basket summary below the results: estimated national
+              average cost + how many basket items each chain carries */}
+          {comparison && !comparing && summary?.estimated_total != null && (
+            <div className="animate-in mt-5 rounded-3xl border border-slate-200/70 bg-white p-5 shadow-sm ring-1 ring-slate-900/5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-700">💡 עלות משוערת של הסל (ממוצע כלל הרשתות בארץ)</p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    להשוואה מול המחיר שמצאנו לך בעיר — כך רואים כמה המנצח באמת משתלם
+                  </p>
+                </div>
+                <div className="text-2xl font-black text-slate-800">₪{summary.estimated_total.toFixed(2)}</div>
+              </div>
+              {summary.chains?.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {summary.chains.map((c) => (
+                    <span
+                      key={c.chain_name}
+                      className={`rounded-full px-2.5 py-1 ring-1 ${
+                        c.items_covered === summary.item_count
+                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                          : 'bg-slate-50 text-slate-500 ring-slate-200'
+                      }`}
+                    >
+                      {c.chain_name} · מחזיקה {c.items_covered}/{summary.item_count} מהמוצרים
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {!comparison && !comparing && !compareError && (
             <div className="mt-10 rounded-3xl border border-dashed border-slate-200 bg-white/60 p-12 text-center">
               {basket.length === 0 ? (
@@ -168,7 +192,6 @@ export default function App() {
 
         <BasketSidebar
           items={basket}
-          summary={summary}
           cities={cities}
           city={city}
           onCityChange={setCity}
