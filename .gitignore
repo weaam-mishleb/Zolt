@@ -39,3 +39,6 @@ db/data/
 
 # Claude local settings
 .claude/settings.local.json
+
+# Defense-prep materials — local only, never pushed (Emil has repo read access)
+docs/defense/
