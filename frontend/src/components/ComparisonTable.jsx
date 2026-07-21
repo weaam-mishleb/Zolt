@@ -37,9 +37,12 @@ function tfClass(isWinner, incomplete) {
 
 // Pinned-right product column.
 // THE WEBKIT RTL FIX: solid opaque bg + sticky on the cell itself + transform-gpu
-// (will-change-transform) to force each pinned cell onto its own GPU layer, so
+// (translateZ(0)) to force each pinned cell onto its own GPU layer, so
 // Safari/WebKit never drops it while dragging the horizontal scrollbar.
-const STICKY = 'sticky right-0 transform-gpu will-change-transform border-l border-slate-200/80'
+// NOTE: no `will-change-transform` — applied to every sticky cell it made
+// Safari thrash a permanent layer per row and flicker (column vanishing and
+// reappearing) on wheel scroll. translateZ(0) alone keeps the drag fix.
+const STICKY = 'sticky right-0 transform-gpu border-l border-slate-200/80'
 const stickyHead = `${STICKY} top-0 z-30 bg-white px-5 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-200/80`
 const stickyBody = `${STICKY} z-20 bg-white px-5 py-3.5 text-right font-medium text-slate-700 border-b border-slate-100 group-hover:bg-slate-50/70`
 const stickyFoot = `${STICKY} z-20 bg-white px-5 py-4 text-right font-bold text-slate-800 border-t border-slate-200/80`
