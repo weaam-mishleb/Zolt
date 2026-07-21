@@ -49,7 +49,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                    MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                    MIN(p.unit_of_measure) AS unit_of_measure,
                    MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-                   COUNT(pr.id) AS availability
+                   COUNT(DISTINCT pr.store_id) AS availability
             FROM products p
             LEFT JOIN prices pr ON pr.product_id = p.id
             WHERE p.barcode LIKE :prefix
@@ -69,7 +69,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                    MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                    MIN(p.unit_of_measure) AS unit_of_measure,
                    MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-                   COUNT(pr.id) AS availability,
+                   COUNT(DISTINCT pr.store_id) AS availability,
                    MAX(MATCH(p.name) AGAINST (:expr IN BOOLEAN MODE)) AS score
             FROM products p
             LEFT JOIN prices pr ON pr.product_id = p.id
@@ -93,7 +93,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                MIN(p.unit_of_measure) AS unit_of_measure,
                MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-               COUNT(pr.id) AS availability
+               COUNT(DISTINCT pr.store_id) AS availability
         FROM products p
         LEFT JOIN prices pr ON pr.product_id = p.id
         WHERE p.name LIKE :contains OR p.manufacturer LIKE :contains
