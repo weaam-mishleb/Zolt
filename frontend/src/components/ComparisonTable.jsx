@@ -98,7 +98,16 @@ export default function ComparisonTable({ result }) {
 
       {/* Single scroll context (w-full + overflow-x-auto). Table is min-w-max so it
           grows past the viewport and scrolls natively in RTL. */}
-      <div className="w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5">
+      {/* Middle-click starts the browser's auto-scroll; on this RTL horizontal
+          scroller the GPU-layered sticky column then fails to repaint and part
+          of the table vanishes. Suppressing auto-scroll here (no links inside)
+          removes the trigger entirely. */}
+      <div
+        onMouseDown={(e) => {
+          if (e.button === 1) e.preventDefault()
+        }}
+        className="w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5"
+      >
         <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
