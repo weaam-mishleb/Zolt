@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from backend.app.services.comparison import build_comparison, prominent_tokens, size_tokens
+from backend.app.services.comparison import (
+    _head_ok,
+    build_comparison,
+    prominent_tokens,
+    size_tokens,
+)
 
 CITY = "תל אביב"
 PRODUCTS = {
@@ -150,7 +155,7 @@ def test_prominent_tokens_skips_sizes_units_and_stopwords():
     assert prominent_tokens("חלב תנובה 3% 1 ליטר") == ["חלב", "תנובה"]
     assert prominent_tokens("500 גרם") == []                 # only size/unit
     assert prominent_tokens("סוכריות על מקל") == ["סוכריות", "מקל"]  # 'על' dropped
-    assert prominent_tokens("אבא אמא ילד בית גן") == ["אבא", "אמא", "ילד"]  # capped at 3
+    assert prominent_tokens("אבא אמא ילד בית גן") == ["אבא", "אמא", "ילד", "בית"]  # capped at 4
 
 
 def test_phantom_twin_store_is_collapsed():
@@ -184,6 +189,19 @@ def test_same_name_branches_with_distinct_addresses_are_kept():
 
     assert res["store_count"] == 2
     assert {s["store_id"] for s in res["stores"]} == {20, 21}
+
+
+def test_head_token_filter_keeps_variants_and_rejects_different_products():
+    # a suffixed variant shares the head root (final-letter forms differ:
+    # מגבון's ן vs מגבוני's נ — must still prefix-match)
+    assert _head_ok("מגבוני בייבי טייגר", "מגבון") is True
+    assert _head_ok("אוכמניות טריות 125 גרם", "אוכמניות") is True
+    assert _head_ok("מארז אוכמניות 125 גרם", "אוכמניות") is True  # מארז is a stop-word
+    # different products that merely CONTAIN the query words are rejected
+    assert _head_ok("שמן קוקוס טבעי", "קוקוס") is False
+    assert _head_ok("קמח קוקוס טבעי", "קוקוס") is False
+    # no head to compare against → don't over-reject
+    assert _head_ok("שמן קוקוס", None) is True
 
 
 def test_quantity_multiplies_line_total():

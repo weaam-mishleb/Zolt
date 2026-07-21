@@ -45,10 +45,13 @@ def _norm_name(name: str | None) -> str:
     return _NAME_WS.sub(" ", (name or "").strip())
 
 
-def prominent_tokens(name: str | None, limit: int = 3) -> list[str]:
+def prominent_tokens(name: str | None, limit: int = 4) -> list[str]:
     """The first few brand/product words of a name (skip numbers/sizes/units).
 
     'קוקה קולה שישיה 1.5 ליטר' → ['קוקה', 'קולה']
+
+    Up to 4 words: a distinguishing 4th word ('...עם תות') tightens fuzzy
+    matching so a plainer variant of the same base can't stand in for it.
     """
     out: list[str] = []
     for raw in re.split(r"[\s\-/,]+", _norm_name(name)):
@@ -107,25 +110,59 @@ def _same_name_ids(db: Session, norm_name: str) -> list[int]:
     return [r[0] for r in rows]
 
 
-def _size_filter(rows: list, sizes: list[str]) -> list[int]:
-    """Keep only candidates whose OWN size signature equals the query's.
+# Hebrew final letters → base form, so a suffixed word still prefix-matches its
+# root ('מגבון' vs 'מגבוני': final ן ≠ medial נ in Unicode). MySQL FULLTEXT
+# normalizes these; Python str.startswith does not, so we do it ourselves.
+_FINALS = str.maketrans("ךםןףץ", "כמנפצ")
 
-    The FULLTEXT/LIKE match is one-directional (candidate must contain the
-    query's numbers) — so a 4-pack '4*55גרם' still matches a '55 גר' query.
-    Comparing full signatures both ways rejects it (['4','55'] ≠ ['55'])."""
-    if not sizes:
-        return [r[0] for r in rows]
+
+def _definal(s: str) -> str:
+    return s.translate(_FINALS)
+
+
+def _head_ok(cand_name: str, head: str | None) -> bool:
+    """Candidate keeps the query's HEAD word (its first prominent token).
+
+    FULLTEXT containment is one-directional, so 'קוקוס טבעי' matched
+    'שמן קוקוס טבעי' / 'קמח קוקוס' — different products that merely contain the
+    query words. Requiring the candidate's own first prominent word to
+    prefix-match the query's head rejects those (head שמן/קמח ≠ קוקוס) while
+    keeping true variants ('אוכמניות' ↔ 'אוכמניות טריות', 'מגבון' ↔ 'מגבוני')."""
+    if not head:
+        return True
+    ct = prominent_tokens(cand_name)
+    if not ct:
+        return True  # nothing to compare — don't over-reject
+    c, h = _definal(ct[0]), _definal(head)
+    return c.startswith(h) or h.startswith(c)
+
+
+def _fuzzy_filter(rows: list, sizes: list[str], head: str | None) -> list[int]:
+    """Keep candidates whose OWN size signature equals the query's AND whose
+    head prominent word matches — the two bidirectional guards on fuzzy match.
+
+    Size: FULLTEXT/LIKE is one-directional, so a 4-pack '4*55גרם' still matches a
+    '55 גר' query; comparing full signatures both ways rejects it."""
     want = set(sizes)
-    return [r[0] for r in rows if set(size_tokens(r[1])) == want]
+    out = []
+    for rid, name in rows:
+        if sizes and set(size_tokens(name)) != want:
+            continue
+        if not _head_ok(name, head):
+            continue
+        out.append(rid)
+    return out
 
 
 def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
-    """Strict fuzzy match: require EVERY brand word (prefix) AND every size token.
+    """Strict fuzzy match: require EVERY brand word (prefix) AND every size token,
+    then keep only candidates with a matching size signature and head word.
 
     Including the size tokens is what stops a cheap single bag from matching an
     expensive multipack (their numeric signatures differ). Items with no numbers
     (e.g. produce) fall back to brand-only matching.
     """
+    head = brand[0] if brand else None
     parts = [f"+{t}*" for t in brand] + [f"+{n}" for n in sizes]
     expr = " ".join(parts)
     if not expr:
@@ -141,7 +178,7 @@ def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
         {"expr": expr, "cap": _MATCH_CAP},
     ).all()
     if rows:
-        return _size_filter(rows, sizes)
+        return _fuzzy_filter(rows, sizes, head)
 
     # Precise LIKE fallback: require ALL tokens as substrings (not just one).
     tokens = brand + sizes
@@ -151,7 +188,7 @@ def _fuzzy_ids(db: Session, brand: list[str], sizes: list[str]) -> list[int]:
     rows = db.execute(
         text(f"SELECT id, name FROM products WHERE {clauses} LIMIT :cap"), params
     ).all()
-    return _size_filter(rows, sizes)
+    return _fuzzy_filter(rows, sizes, head)
 
 
 def _money(value: Decimal | None) -> float | None:
