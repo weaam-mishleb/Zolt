@@ -16,7 +16,7 @@
 [![Test Plan](https://img.shields.io/badge/test%20plan-10%2F10-3FB950)](#-testing)
 
 A modern, full-stack, **RTL** web platform that compares a live shopping basket across
-**540+ branches** and **2.4M+ price points** sourced from the Israeli price-transparency feed.
+**540+ branches** and **1.9M+ price points** sourced from the Israeli price-transparency feed.
 
 </div>
 
