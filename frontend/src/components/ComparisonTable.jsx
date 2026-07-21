@@ -36,13 +36,12 @@ function tfClass(isWinner, incomplete) {
 }
 
 // Pinned-right product column.
-// THE WEBKIT RTL FIX: solid opaque bg + sticky on the cell itself + transform-gpu
-// (translateZ(0)) to force each pinned cell onto its own GPU layer, so
-// Safari/WebKit never drops it while dragging the horizontal scrollbar.
-// NOTE: no `will-change-transform` — applied to every sticky cell it made
-// Safari thrash a permanent layer per row and flicker (column vanishing and
-// reappearing) on wheel scroll. translateZ(0) alone keeps the drag fix.
-const STICKY = 'sticky right-0 transform-gpu border-l border-slate-200/80'
+// THE WEBKIT RTL FIX: solid opaque background + z-index, and NO transform on the
+// sticky cell itself. A `transform`/`will-change` on a position:sticky element
+// makes Safari drop it during scroll (the pinned column vanished and reappeared).
+// The GPU layer is promoted once on the SCROLL CONTAINER instead (see below), so
+// the whole scroll area repaints as one stable layer.
+const STICKY = 'sticky right-0 border-l border-slate-200/80'
 const stickyHead = `${STICKY} top-0 z-30 bg-white px-5 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-200/80`
 const stickyBody = `${STICKY} z-20 bg-white px-5 py-3.5 text-right font-medium text-slate-700 border-b border-slate-100 group-hover:bg-slate-50/70`
 const stickyFoot = `${STICKY} z-20 bg-white px-5 py-4 text-right font-bold text-slate-800 border-t border-slate-200/80`
@@ -109,6 +108,10 @@ export default function ComparisonTable({ result }) {
         onMouseDown={(e) => {
           if (e.button === 1) e.preventDefault()
         }}
+        // translateZ(0) promotes the scroll area to one stable GPU layer so the
+        // pinned column repaints with it (instead of per-cell layers that Safari
+        // dropped mid-scroll).
+        style={{ transform: 'translateZ(0)' }}
         className="w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5"
       >
         <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
