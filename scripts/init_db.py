@@ -49,6 +49,41 @@ def _apply(statements: list[str]) -> None:
             conn.execute(text(stmt))
 
 
+# ── Migrations for databases created before a column/index existed ──────────
+# `CREATE TABLE IF NOT EXISTS` never alters an existing table, so additive
+# schema changes need an explicit, idempotent step here. MySQL has no
+# `ADD COLUMN IF NOT EXISTS`, hence the information_schema probes.
+def _migrate() -> None:
+    with engine.begin() as conn:
+        has_col = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'products' "
+                "AND column_name = 'name_norm'"
+            )
+        ).scalar()
+        if not has_col:
+            print("  · adding products.name_norm (generated)", flush=True)
+            conn.execute(
+                text(
+                    "ALTER TABLE products ADD COLUMN name_norm VARCHAR(255) "
+                    "GENERATED ALWAYS AS (REGEXP_REPLACE(TRIM(name), "
+                    "'[[:space:]]+', ' ')) STORED"
+                )
+            )
+
+        has_idx = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'products' "
+                "AND index_name = 'idx_products_name_norm'"
+            )
+        ).scalar()
+        if not has_idx:
+            print("  · adding idx_products_name_norm", flush=True)
+            conn.execute(text("CREATE INDEX idx_products_name_norm ON products (name_norm)"))
+
+
 def main(max_retries: int = 8) -> None:
     sql = "\n".join(
         p.read_text(encoding="utf-8") for p in sorted(SCHEMA_DIR.glob("*.sql"))
@@ -60,6 +95,7 @@ def main(max_retries: int = 8) -> None:
     for attempt in range(max_retries + 1):
         try:
             _apply(statements)
+            _migrate()
             print("✅ schema applied successfully", flush=True)
             return
         # DBAPIError covers sqlalchemy.exc.OperationalError / InterfaceError / etc.;

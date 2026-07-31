@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -92,16 +91,3 @@ def get_status() -> dict:
     }
 
 
-def trigger_now() -> str:
-    """Queue an immediate one-off run of the ETL job. Returns the job id."""
-    if not is_running():
-        raise RuntimeError("scheduler is not running")
-    job_id = f"manual_etl_{int(datetime.now().timestamp())}"
-    _scheduler.add_job(
-        weekly_etl_job,
-        trigger="date",  # run once, now
-        id=job_id,
-        name="Manual ETL (triggered)",
-        max_instances=1,
-    )
-    return job_id

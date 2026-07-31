@@ -37,6 +37,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DATA_TAG: ${{ inputs.data_tag || 'dataset-v1' }}
+      # Optional: set these repo secrets to make the weekly run load FRESH data.
+      # Without them the run falls back to the pinned release snapshot below.
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KAGGLE_DATASET: erlichsefi/israeli-supermarkets-data
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +53,26 @@ jobs:
       - name: Install dependencies
         run: pip install -r etl/requirements.txt
 
-      - name: Stage dataset (committed stores + price files from the release)
+      # Preferred source: the live Kaggle mirror, so the weekly cron actually
+      # refreshes prices instead of re-loading one frozen snapshot forever.
+      - name: Fetch fresh dataset from Kaggle (when configured)
+        if: env.KAGGLE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p secrets archive
+          cp db/seed_stores/*.csv archive/
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > secrets/kaggle.json
+          chmod 600 secrets/kaggle.json
+          python -c "import os; from etl.downloaders.kaggle_download import download_dataset; \
+                     download_dataset(os.environ['KAGGLE_DATASET'])"
+          rm -f secrets/kaggle.json
+          echo "DATA_SOURCE=kaggle (fresh)" >> "$GITHUB_ENV"
+          ls -lh archive
+
+      # Fallback: the pinned release snapshot (no Kaggle account needed).
+      - name: Stage pinned snapshot (committed stores + release price files)
+        if: env.KAGGLE_KEY == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -56,7 +80,11 @@ jobs:
           cp db/seed_stores/*.csv archive/
           gh release download "$DATA_TAG" --repo "$GITHUB_REPOSITORY" -p '*.csv.gz' -D archive
           gunzip -f archive/*.gz
+          echo "DATA_SOURCE=release $DATA_TAG (pinned snapshot)" >> "$GITHUB_ENV"
           ls -lh archive
+
+      - name: Report data source
+        run: echo "Loading from → $DATA_SOURCE"
 
       - name: Initialize schema (idempotent)
         env:

@@ -43,19 +43,6 @@ def scheduler_status(admin: str = Depends(get_current_admin)):
     return scheduler.get_status()
 
 
-@router.post(
-    "/etl/refresh",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Trigger the Kaggle download + ETL now (protected)",
-)
-def trigger_etl(admin: str = Depends(get_current_admin)):
-    try:
-        job_id = scheduler.trigger_now()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-    return {"status": "accepted", "job_id": job_id}
-
-
 def _latest_job() -> dict | None:
     """Latest etl_jobs row, or None if the table is missing / DB hiccuped."""
     try:

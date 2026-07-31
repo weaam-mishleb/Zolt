@@ -12,6 +12,7 @@
 [![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![CI](https://github.com/weaam-mishleb/Zolt/actions/workflows/tests.yml/badge.svg)](https://github.com/weaam-mishleb/Zolt/actions/workflows/tests.yml)
 [![Tests](https://img.shields.io/badge/unit%20tests-113%20passing-3FB950)](#-testing)
 [![Test Plan](https://img.shields.io/badge/test%20plan-10%2F10-3FB950)](#-testing)
 
@@ -192,6 +193,9 @@ python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...T
 ```
 
 - **113** unit tests (comparison ranking, twin-store dedup, fuzzy tokenization, size/head-word guards, money rounding, search expression, city normalization, API validation).
+- **CI gate** — [`tests.yml`](.github/workflows/tests.yml) runs ruff + the unit suite +
+  the frontend build on every push/PR to `main`, so a broken commit is caught before
+  Render/Vercel auto-deploy it.
 - **Full test documentation** — every test, what it verifies, SRS traceability and latest
   verified results (incl. the measured **89 MB** ETL peak): **[docs/TESTING.md](docs/TESTING.md)**.
 - **10/10** Test-Plan cases — incl. negative-quantity rejection (`400`), upsert-without-duplicate,

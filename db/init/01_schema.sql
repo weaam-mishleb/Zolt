@@ -52,10 +52,17 @@ CREATE TABLE IF NOT EXISTS products (
   quantity         DECIMAL(12,3) NULL                  COMMENT 'quantity value',
   unit_of_measure  VARCHAR(50)   NULL                  COMMENT 'unitofmeasure',
   is_weighted      TINYINT(1)    NOT NULL DEFAULT 0    COMMENT 'bisweighted',
+  -- Pre-normalized name (trim + collapse inner whitespace), maintained by MySQL.
+  -- Same-name matching filters on THIS column so the query stays sargable: doing
+  -- REGEXP_REPLACE(name) in the WHERE clause disables the index and forces a
+  -- full scan of every product row.
+  name_norm        VARCHAR(255)
+                   GENERATED ALWAYS AS (REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' ')) STORED,
   created_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_product_barcode (barcode),
+  KEY idx_products_name_norm (name_norm),
   FULLTEXT KEY ft_product_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -97,14 +97,10 @@ def _same_name_ids(db: Session, norm_name: str) -> list[int]:
     item sold under different barcodes across chains."""
     if not norm_name:
         return []
+    # Filters on the pre-normalized generated column (indexed) — normalizing
+    # inside the WHERE clause would disable the index and full-scan products.
     rows = db.execute(
-        text(
-            """
-            SELECT id FROM products
-            WHERE REGEXP_REPLACE(TRIM(name), '[[:space:]]+', ' ') = :n
-            LIMIT :cap
-            """
-        ).bindparams(),
+        text("SELECT id FROM products WHERE name_norm = :n LIMIT :cap"),
         {"n": norm_name, "cap": _MATCH_CAP},
     ).all()
     return [r[0] for r in rows]
@@ -249,7 +245,7 @@ def basket_summary(db: Session, items: list) -> dict:
             """
             SELECT rep.id AS rid, AVG(pr.price) AS avg_price
             FROM products rep
-            JOIN products p2 ON p2.name = rep.name
+            JOIN products p2 ON p2.name_norm = rep.name_norm
             JOIN prices pr ON pr.product_id = p2.id
             WHERE rep.id IN :ids
             GROUP BY rep.id
@@ -264,7 +260,7 @@ def basket_summary(db: Session, items: list) -> dict:
             """
             SELECT s.chain_name, COUNT(DISTINCT rep.id) AS items_covered
             FROM products rep
-            JOIN products p2 ON p2.name = rep.name
+            JOIN products p2 ON p2.name_norm = rep.name_norm
             JOIN prices pr ON pr.product_id = p2.id
             JOIN stores s ON s.id = pr.store_id
             WHERE rep.id IN :ids
