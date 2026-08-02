@@ -13,7 +13,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
 [![CI](https://github.com/weaam-mishleb/Zolt/actions/workflows/tests.yml/badge.svg)](https://github.com/weaam-mishleb/Zolt/actions/workflows/tests.yml)
-[![Tests](https://img.shields.io/badge/unit%20tests-205%20passing-3FB950)](#-testing)
+[![Tests](https://img.shields.io/badge/unit%20tests-216%20passing-3FB950)](#-testing)
 [![Test Plan](https://img.shields.io/badge/test%20plan-10%2F10-3FB950)](#-testing)
 
 A modern, full-stack, **RTL** web platform that compares a live shopping basket across
@@ -188,11 +188,11 @@ Shufersal 71% · Rami Levy 24% · Osher Ad 5%.
 ## 🧪 Testing
 
 ```bash
-make test                          # 205 backend unit tests
+make test                          # 216 backend unit tests
 python -m scripts.run_test_plan    # the 10 documented Test-Plan cases (TC-1...TC-10)
 ```
 
-- **205** unit tests (comparison ranking, promotion rule engine, promo-format adapters, twin-store dedup, fuzzy tokenization, money rounding, city normalization, API validation).
+- **216** unit tests (comparison ranking, promotion rule engine, promo-format adapters, twin-store dedup, fuzzy tokenization, money rounding, city normalization, API validation).
 - **CI gate** — [`tests.yml`](.github/workflows/tests.yml) runs ruff + the unit suite +
   the frontend build on every push/PR to `main`, so a broken commit is caught before
   Render/Vercel auto-deploy it.

@@ -28,6 +28,9 @@ on:
       load_promotions:
         description: "Also load promotion files (true/false)"
         default: "true"
+      dataset:
+        description: "Kaggle dataset id (owner/name) — leave empty for the default"
+        default: ""
 
 permissions:
   contents: read
@@ -37,8 +40,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # ── Replace with your dataset id ──────────────────────────────────────────
-  KAGGLE_DATASET: erlichsefi/israeli-supermarkets-data
+  # Defaults to the dataset this project already targets (.env.example);
+  # override per-run with the `dataset` input. Deliberately NOT a placeholder —
+  # an unreplaced one once made every download fail while the jobs still went
+  # green.
+  KAGGLE_DATASET: ${{ inputs.dataset || 'erlichsefi/israeli-supermarkets-data' }}
   KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
   KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
@@ -132,19 +138,32 @@ jobs:
           PRICE="price_file_${CHAIN}.csv"
           [ "$FULL" = "false" ] || PRICE="price_full_file_${CHAIN}.csv"
 
-          FILES=( "store_file_${CHAIN}.csv" "$PRICE" )
-          [ "$LOAD_PROMOTIONS" != "true" ] || FILES+=( "promo_file_${CHAIN}.csv" )
+          # Promo files are optional (not every chain publishes one); the store
+          # and price files are NOT — without them the load is meaningless.
+          OPTIONAL=( )
+          [ "$LOAD_PROMOTIONS" != "true" ] || OPTIONAL+=( "promo_file_${CHAIN}.csv" )
 
-          for f in "${FILES[@]}"; do
+          for f in "store_file_${CHAIN}.csv" "$PRICE" "${OPTIONAL[@]}"; do
             echo "→ $f"
-            # Not every chain publishes every file; a miss must not fail the job.
             kaggle datasets download -d "$KAGGLE_DATASET" -f "$f" -p archive --force --unzip \
-              || echo "::warning::$f not available in the dataset — skipping"
+              || echo "::warning::could not download $f"
           done
 
           # A single-file download can still arrive zipped depending on size.
           for z in archive/*.zip; do [ -e "$z" ] && unzip -o "$z" -d archive && rm -f "$z"; done || true
           ls -lh archive
+
+          # HARD GATE: a failed download must not look like a successful load.
+          # This is the exact failure that once produced 26 green jobs holding
+          # zero rows.
+          for required in "store_file_${CHAIN}.csv" "$PRICE"; do
+            if [ ! -s "archive/$required" ]; then
+              echo "::error::required file missing or empty after download: $required"
+              echo "Check that KAGGLE_DATASET ('$KAGGLE_DATASET') is correct and that the"
+              echo "KAGGLE_USERNAME / KAGGLE_KEY secrets can access it."
+              exit 1
+            fi
+          done
 
       - name: Load prices — ${{ matrix.name }}
         run: |
@@ -159,6 +178,11 @@ jobs:
       - name: Load promotions — ${{ matrix.name }}
         if: env.LOAD_PROMOTIONS == 'true'
         run: python -m etl.promotions --chains "$CHAIN"
+
+      # Verifies the chain's data is actually IN the database. A green job that
+      # loaded nothing is worse than a red one — it looks like success.
+      - name: Data-quality gate
+        run: python -m scripts.dq_check --chain "$CHAIN"
 
   # ── 3. Always report, even when some chains failed ─────────────────────────
   report:
