@@ -38,7 +38,7 @@ concurrency:
 
 env:
   # ── Replace with your dataset id ──────────────────────────────────────────
-  KAGGLE_DATASET: creator/dataset-name
+  KAGGLE_DATASET: erlichsefi/israeli-supermarkets-data
   KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
   KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
