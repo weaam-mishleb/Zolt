@@ -45,7 +45,11 @@ export function PriceWithDiscount({ original, final, className = '' }) {
   )
 }
 
-/** One basket line: name, qty, promo badge, and the price pair. */
+/** One basket line: name, qty, promo badge, and the price pair.
+ *
+ * `name` is resolved by the caller: the comparison API returns product ids on
+ * the line and the names once, in `result.products`.
+ */
 export function CartLineRow({ item }) {
   if (!item?.found) {
     return (
@@ -85,13 +89,19 @@ export function CartLineRow({ item }) {
   )
 }
 
-export default function CartBreakdown({ store }) {
+export default function CartBreakdown({ store, products = [] }) {
   if (!store) return null
 
+  // Every field below tolerates absence: until promotions are loaded in an
+  // environment the API returns plain base prices, and this panel must still
+  // render a correct (just discount-free) receipt.
   const base = store.base_total ?? store.total
   const savings = store.total_savings ?? Math.max(0, base - store.total)
   const promos = store.applied_promotions ?? []
   const hasSavings = savings > 0.005
+
+  const nameOf = (productId) =>
+    products.find((p) => p.id === productId)?.name || `#${productId}`
 
   return (
     <section
@@ -119,7 +129,10 @@ export default function CartBreakdown({ store }) {
       {/* Per-line detail — this is the "show your work" part */}
       <ul className="divide-y divide-slate-100">
         {(store.items ?? []).map((item) => (
-          <CartLineRow key={item.product_id} item={item} />
+          <CartLineRow
+            key={item.product_id}
+            item={{ ...item, name: item.name ?? nameOf(item.product_id) }}
+          />
         ))}
       </ul>
 
@@ -165,7 +178,9 @@ export default function CartBreakdown({ store }) {
         </div>
       </dl>
 
-      {/* Honest caveat — promotions have terms we cannot fully model. */}
+      {/* Honest caveat — promotions have terms we cannot fully model.
+          Shown only when a promotion actually applied, so a plain receipt is
+          not cluttered with a disclaimer about something that did not happen. */}
       {promos.length > 0 && (
         <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
           המחירים והמבצעים מבוססים על הקבצים שהרשתות מפרסמות. ייתכנו מבצעי מועדון או תנאים

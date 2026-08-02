@@ -3,6 +3,7 @@ import Header from './components/Header.jsx'
 import SearchBar from './components/SearchBar.jsx'
 import BasketSidebar from './components/BasketSidebar.jsx'
 import ComparisonTable from './components/ComparisonTable.jsx'
+import CartBreakdown from './components/promotions/CartBreakdown.jsx'
 import { basketSummary, compareBasket, getCities } from './api'
 
 const STORAGE_KEY = 'zolt.basket'
@@ -42,6 +43,11 @@ export default function App() {
   // together with the comparison and shown below the results table.
   // Best-effort: any failure simply hides the block.
   const [summary, setSummary] = useState(null)
+
+  // The winning branch, or null when no branch carries the whole basket.
+  // `?.` throughout: a comparison may arrive with no stores at all.
+  const winnerStore =
+    comparison?.stores?.find((s) => s.store_id === comparison.winner_store_id) ?? null
 
   function addProduct(product) {
     setBasket((prev) => {
@@ -134,6 +140,16 @@ export default function App() {
           )}
 
           {comparison && !comparing && <ComparisonTable result={comparison} />}
+
+          {/* Itemised receipt for the winning branch — the table answers WHERE
+              to shop, this answers WHY it is cheapest, line by line. Rendered
+              only when a winner exists (no winner = no branch carried the whole
+              basket, and a partial receipt would mislead). */}
+          {comparison && !comparing && winnerStore && (
+            <div className="mt-5">
+              <CartBreakdown store={winnerStore} products={comparison.products} />
+            </div>
+          )}
 
           {/* FR-3.6 — basket summary below the results: estimated national
               average cost + how many basket items each chain carries */}
