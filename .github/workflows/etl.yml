@@ -8,9 +8,12 @@ name: ETL → Cloud DB
 # built-in GITHUB_TOKEN. The tiny store CSVs are committed in db/seed_stores/.
 # One-time setup: create a release (default tag "dataset-v1") and upload the 3
 # files archive/price_full_file_*.csv.gz (see DEPLOYMENT.md).
+# ⚠️ DEPRECATED — superseded by etl-matrix.yml (per-chain matrix, Kaggle source).
+# The schedule is removed on purpose: two cron'd loaders writing to the same
+# database would race. Kept as a manual escape hatch for loading from the pinned
+# release snapshot when Kaggle is unavailable; safe to delete once you no longer
+# need that fallback.
 on:
-  schedule:
-    - cron: "0 0 * * 0"   # Sunday 00:00 UTC ≈ 03:00 Israel — weekly refresh (SRS FR-1.4)
   workflow_dispatch:
     inputs:
       data_tag:

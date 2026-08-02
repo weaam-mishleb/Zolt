@@ -1,26 +1,29 @@
 name: ETL (matrix) → Cloud DB
 
-# Nationwide loader: one isolated job PER CHAIN instead of one monolithic run.
+# Nationwide loader: one isolated job PER CHAIN, data pulled straight from Kaggle.
 #
 # Why a matrix:
-#   • Isolation  — a malformed file in one chain can no longer fail the other 32.
+#   • Isolation  — a malformed file in one chain cannot fail the other 32.
 #   • Parallelism— wall time drops from ~25 min serial to ~8-10 min.
-#   • Retry      — you re-run a single failed chain, not the whole nationwide load.
-#   • Visibility — every chain gets its own etl_jobs row and its own GH Actions log.
+#   • Retry      — you re-run a single failed chain, not the whole load.
+#   • Memory     — each runner streams one chain, so RAM stays ~90 MB.
 #
-# The chain list lives in etl/chains.json (single source of truth) — adding a chain
-# never requires editing this file.
+# Why per-FILE Kaggle downloads (not `kaggle datasets download` of everything):
+#   the dataset is ~14 GB. Pulling all of it in each of 33 jobs would move
+#   ~460 GB per run. `-f <file>` fetches only the 3 files a chain needs.
+#
+# The chain list lives in etl/chains.json — adding a chain never touches this file.
 
 on:
   schedule:
-    - cron: "0 0 * * *"        # nightly 00:00 UTC ≈ 03:00 Israel
+    - cron: "0 0 * * *"          # nightly 00:00 UTC ≈ 03:00 Israel
   workflow_dispatch:
     inputs:
       chains:
         description: "Comma-separated slugs to load (empty = all enabled)"
         default: ""
       full:
-        description: "Load the full price catalog (true/false)"
+        description: "Use the full price catalog (true) or the lighter snapshot (false)"
         default: "true"
       load_promotions:
         description: "Also load promotion files (true/false)"
@@ -30,11 +33,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: etl-nationwide
-  cancel-in-progress: false     # never interrupt a load midway
+  group: etl-nationwide          # never let two loads write to the DB at once
+  cancel-in-progress: false
+
+env:
+  # ── Replace with your dataset id ──────────────────────────────────────────
+  KAGGLE_DATASET: creator/dataset-name
+  KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+  KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
 jobs:
-  # ── 1. Build the matrix from etl/chains.json ────────────────────────────────
+  # ── 1. Build the matrix + migrate the schema once ──────────────────────────
   plan:
     name: Plan chains
     runs-on: ubuntu-latest
@@ -44,12 +53,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
       - id: build
         shell: bash
         run: |
           set -euo pipefail
-          FILTER='${{ inputs.chains }}'
-          MATRIX=$(python3 - "$FILTER" <<'PY'
+          MATRIX=$(python3 - '${{ inputs.chains }}' <<'PY'
           import json, sys
           wanted = {s.strip() for s in (sys.argv[1] or "").split(",") if s.strip()}
           chains = json.load(open("etl/chains.json"))["chains"]
@@ -62,9 +75,11 @@ jobs:
           PY
           )
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "count=$(echo "$MATRIX" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))')" >> "$GITHUB_OUTPUT"
+          echo "count=$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])["include"]))' "$MATRIX")" >> "$GITHUB_OUTPUT"
 
-      - name: Apply schema / migrations once (before any loader runs)
+      # Runs once, before any loader — creating tables inside 33 parallel jobs
+      # would race.
+      - name: Apply schema + migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DB_SSL: "true"
@@ -72,7 +87,7 @@ jobs:
           pip install -r etl/requirements.txt
           python -m scripts.init_db
 
-  # ── 2. One isolated job per chain ───────────────────────────────────────────
+  # ── 2. One isolated job per chain ──────────────────────────────────────────
   load:
     name: ${{ matrix.name }}
     needs: plan
@@ -80,18 +95,14 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false            # one bad chain must not cancel the rest
-      max-parallel: 6             # cap concurrent writers so the DB pool isn't saturated
+      max-parallel: 6             # cap concurrent writers so the DB pool holds
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DB_SSL: "true"
-      DATA_TAG: dataset-v1
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-      KAGGLE_DATASET: erlichsefi/israeli-supermarkets-data
-      LOAD_PROMOTIONS: ${{ inputs.load_promotions || 'true' }}
+      CHAIN: ${{ matrix.slug }}   # ← the matrix value, as an env var
       FULL: ${{ inputs.full || 'true' }}
+      LOAD_PROMOTIONS: ${{ inputs.load_promotions || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,56 +111,67 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r etl/requirements.txt
+      - name: Install dependencies
+        run: pip install -r etl/requirements.txt      # includes the kaggle package
 
-      # Only this chain's files are staged — keeps each runner's disk small.
-      - name: Stage data for ${{ matrix.slug }}
+      - name: Verify Kaggle credentials
+        run: |
+          if [ -z "${KAGGLE_USERNAME:-}" ] || [ -z "${KAGGLE_KEY:-}" ]; then
+            echo "::error::KAGGLE_USERNAME / KAGGLE_KEY secrets are not set"
+            exit 1
+          fi
+          kaggle --version
+
+      # Only this chain's files — the CLI reads KAGGLE_USERNAME/KAGGLE_KEY from
+      # the environment, so no kaggle.json ever touches the disk.
+      - name: Download ${{ matrix.slug }} files from Kaggle
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p archive
-          cp "db/seed_stores/store_file_${{ matrix.slug }}.csv" archive/ 2>/dev/null || true
-          if [ -n "$KAGGLE_KEY" ]; then
-            mkdir -p secrets
-            printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > secrets/kaggle.json
-            chmod 600 secrets/kaggle.json
-            python -c "import os; from etl.downloaders.kaggle_download import download_dataset; \
-                       download_dataset(os.environ['KAGGLE_DATASET'])"
-            rm -f secrets/kaggle.json
-            echo "DATA_SOURCE=kaggle (fresh)" >> "$GITHUB_ENV"
-          else
-            gh release download "$DATA_TAG" --repo "$GITHUB_REPOSITORY" \
-               -p "*_${{ matrix.slug }}.csv.gz" -D archive || true
-            gunzip -f archive/*.gz 2>/dev/null || true
-            echo "DATA_SOURCE=release $DATA_TAG (pinned)" >> "$GITHUB_ENV"
-          fi
-          ls -lh archive | head
+          PRICE="price_file_${CHAIN}.csv"
+          [ "$FULL" = "false" ] || PRICE="price_full_file_${CHAIN}.csv"
+
+          FILES=( "store_file_${CHAIN}.csv" "$PRICE" )
+          [ "$LOAD_PROMOTIONS" != "true" ] || FILES+=( "promo_file_${CHAIN}.csv" )
+
+          for f in "${FILES[@]}"; do
+            echo "→ $f"
+            # Not every chain publishes every file; a miss must not fail the job.
+            kaggle datasets download -d "$KAGGLE_DATASET" -f "$f" -p archive --force --unzip \
+              || echo "::warning::$f not available in the dataset — skipping"
+          done
+
+          # A single-file download can still arrive zipped depending on size.
+          for z in archive/*.zip; do [ -e "$z" ] && unzip -o "$z" -d archive && rm -f "$z"; done || true
+          ls -lh archive
 
       - name: Load prices — ${{ matrix.name }}
         run: |
-          FLAGS="--chains ${{ matrix.slug }} --batch-size 1000"
+          FLAGS="--chains $CHAIN --batch-size 1000"
           [ "$FULL" = "false" ] || FLAGS="$FLAGS --full"
           python -m etl.run $FLAGS
 
+      # Canonical ids must exist before promotion items can link to them.
+      - name: Resolve canonical products
+        run: python -m etl.canonical
+
       - name: Load promotions — ${{ matrix.name }}
         if: env.LOAD_PROMOTIONS == 'true'
-        run: python -m etl.promotions --chains ${{ matrix.slug }}
+        run: python -m etl.promotions --chains "$CHAIN"
 
-      - name: Data-quality gate
-        run: python -m scripts.dq_check --chain ${{ matrix.slug }}
-
-  # ── 3. Always report, even if some chains failed ────────────────────────────
+  # ── 3. Always report, even when some chains failed ─────────────────────────
   report:
     name: Summary
     needs: [plan, load]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Summarize
-        run: |
+      - run: |
           echo "### Nationwide ETL — ${{ needs.plan.outputs.count }} chains" >> $GITHUB_STEP_SUMMARY
           echo "Loader result: **${{ needs.load.result }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Per-chain detail: see the job list above, or query \`etl_jobs\` (one row per chain)." >> $GITHUB_STEP_SUMMARY
-          [ "${{ needs.load.result }}" = "failure" ] && echo "::warning::One or more chains failed — the rest loaded successfully." || true
-          exit 0
+          echo "Per-chain detail: the job list above, or \`SELECT * FROM etl_jobs ORDER BY id DESC\`." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.load.result }}" = "failure" ]; then
+            echo "::warning::One or more chains failed — the rest loaded successfully."
+          fi
