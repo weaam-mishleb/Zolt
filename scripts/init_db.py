@@ -26,12 +26,57 @@ _SKIP_PREFIXES = ("create database", "use ", "set names")
 _TRANSIENT_CODES = {2013, 2006, 1053}  # lost connection / gone away / shutdown
 
 
-def _statements(sql: str) -> list[str]:
+def _split_on_semicolons(code: str) -> list[str]:
+    """Split on ';' while respecting single-quoted strings.
+
+    A naive `code.split(';')` cuts statements in half whenever a semicolon
+    appears inside a string literal — and this schema uses `COMMENT '...'`
+    heavily, e.g. COMMENT '1.000 = certain; low scores go to review'.
+    """
     out: list[str] = []
-    for chunk in sql.split(";"):
-        body = "\n".join(
-            ln for ln in chunk.splitlines() if not ln.strip().startswith("--")
-        ).strip()
+    buf: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(code):
+        ch = code[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(code):     # escaped char
+                buf.append(ch)
+                buf.append(code[i + 1])
+                i += 2
+                continue
+            if ch == "'":
+                if i + 1 < len(code) and code[i + 1] == "'":   # '' → literal quote
+                    buf.append("''")
+                    i += 2
+                    continue
+                in_string = False
+            buf.append(ch)
+        elif ch == "'":
+            in_string = True
+            buf.append(ch)
+        elif ch == ";":
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return out
+
+
+def _statements(sql: str) -> list[str]:
+    """Split a .sql file into executable statements.
+
+    Line comments are stripped BEFORE splitting (a ';' inside a `--` comment
+    would cut a statement in half), and the split itself is string-aware.
+    """
+    code = "\n".join(
+        ln for ln in sql.splitlines() if not ln.strip().startswith("--")
+    )
+    out: list[str] = []
+    for chunk in _split_on_semicolons(code):
+        body = chunk.strip()
         if body and not body.lower().startswith(_SKIP_PREFIXES):
             out.append(body)
     return out
@@ -82,6 +127,19 @@ def _migrate() -> None:
         if not has_idx:
             print("  · adding idx_products_name_norm", flush=True)
             conn.execute(text("CREATE INDEX idx_products_name_norm ON products (name_norm)"))
+
+        # promotions.club_id started at VARCHAR(32) — too small for the club
+        # *expressions* some chains ship (105 chars observed at Rami Levy).
+        club_len = conn.execute(
+            text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'promotions' "
+                "AND column_name = 'club_id'"
+            )
+        ).scalar()
+        if club_len is not None and club_len < 255:
+            print("  · widening promotions.club_id → VARCHAR(255)", flush=True)
+            conn.execute(text("ALTER TABLE promotions MODIFY club_id VARCHAR(255) NULL"))
 
 
 def main(max_retries: int = 8) -> None:

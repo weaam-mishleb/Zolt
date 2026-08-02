@@ -321,7 +321,7 @@ def build_comparison(
     qty_by_pid: dict[int, Decimal],
     products: dict[int, dict],
     price_rows: list[dict],
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> dict:
     """Pure ranking logic (no DB) — unit-testable.
 
@@ -420,7 +420,10 @@ def build_comparison(
 
     ordered = complete + incomplete
     winner_id = complete[0]["store_id"] if complete else None
-    shown = _select_branches(ordered, limit)  # cap to `limit` branches
+    # `limit=None` returns every branch — used when promotions are priced
+    # afterwards, so a branch that only wins *after* a discount is not cut
+    # before it was ever evaluated.
+    shown = _select_branches(ordered, limit) if limit else ordered
 
     return {
         "city": city,
@@ -559,4 +562,11 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
                 row["price"] = best[1]
                 chosen.append(row)
 
-    return build_comparison(city, repr_ids, qty_by_repr, products_meta, chosen)
+    # Rank on base prices WITHOUT capping, then let the promotion layer reprice
+    # and re-rank — a branch that only wins after a discount must still be in
+    # the running when discounts are applied.
+    result = build_comparison(city, repr_ids, qty_by_repr, products_meta, chosen, limit=None)
+
+    from .promotions import apply_promotions   # local import avoids a cycle
+
+    return apply_promotions(db, result, limit=10)

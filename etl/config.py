@@ -52,3 +52,8 @@ def store_file(data_dir: Path, slug: str) -> Path:
 def price_file(data_dir: Path, slug: str, full: bool = False) -> Path:
     name = f"price_full_file_{slug}.csv" if full else f"price_file_{slug}.csv"
     return data_dir / name
+
+
+def promo_file(data_dir: Path, slug: str, full: bool = False) -> Path:
+    name = f"promo_full_file_{slug}.csv" if full else f"promo_file_{slug}.csv"
+    return data_dir / name

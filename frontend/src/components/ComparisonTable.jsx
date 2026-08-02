@@ -1,3 +1,5 @@
+import PromotionBadge from './promotions/PromotionBadge.jsx'
+
 const ils = new Intl.NumberFormat('he-IL', {
   style: 'currency',
   currency: 'ILS',
@@ -83,7 +85,14 @@ export default function ComparisonTable({ result }) {
               )}
             </div>
           </div>
-          <div className="text-3xl font-black text-emerald-700">{ils.format(winner.total)}</div>
+          <div className="text-left">
+            <div className="text-3xl font-black text-emerald-700">{ils.format(winner.total)}</div>
+            {winner.total_savings > 0 && (
+              <div className="mt-0.5 text-xs font-semibold text-violet-600">
+                כולל {ils.format(winner.total_savings)} הנחות מבצע
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-800 shadow-sm">
@@ -165,9 +174,29 @@ export default function ComparisonTable({ result }) {
                       </td>
                     )
                   }
+                  const discounted =
+                    it.original_line_total != null && it.original_line_total > it.line_total
                   return (
                     <td key={s.store_id} className={tdClass(isWinner)}>
-                      {ils.format(it.line_total)}
+                      {discounted ? (
+                        <span className="flex flex-col items-center leading-tight">
+                          <span className="flex items-baseline justify-center gap-1">
+                            <s className="text-[11px] text-slate-400 decoration-rose-400/70">
+                              <span className="sr-only">מחיר מקורי </span>
+                              {ils.format(it.original_line_total)}
+                            </s>
+                            <span className="font-bold text-violet-700">
+                              <span className="sr-only">במבצע </span>
+                              {ils.format(it.line_total)}
+                            </span>
+                          </span>
+                          {it.applied_promotion && (
+                            <PromotionBadge promo={it.applied_promotion} size="xs" showIcon={false} />
+                          )}
+                        </span>
+                      ) : (
+                        ils.format(it.line_total)
+                      )}
                     </td>
                   )
                 })}
@@ -183,6 +212,11 @@ export default function ComparisonTable({ result }) {
                 return (
                   <td key={s.store_id} className={tfClass(isWinner, !s.is_complete)}>
                     {ils.format(s.total)}
+                    {s.total_savings > 0 && (
+                      <span className="block text-[11px] font-semibold text-violet-600">
+                        חסכת {ils.format(s.total_savings)}
+                      </span>
+                    )}
                     {!s.is_complete && <span className="block text-[11px] font-medium">חלקי</span>}
                   </td>
                 )

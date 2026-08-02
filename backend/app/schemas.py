@@ -68,11 +68,27 @@ class ProductBrief(BaseModel):
     barcode: str | None = None
 
 
+class AppliedPromotion(BaseModel):
+    """A promotion the engine actually applied — what the UI explains to the user."""
+
+    id: int
+    reward_kind: str                      # FIXED_PRICE | BUNDLE_PRICE | PCT_OFF | ...
+    description: str | None = None        # feed text, display only
+    savings: float | None = None          # ILS this promotion took off the basket
+    min_qty: float | None = None
+    discounted_price: float | None = None
+    discount_rate: float | None = None
+    discount_amount: float | None = None
+    min_basket_amount: float | None = None
+
+
 class StoreItemPrice(BaseModel):
     product_id: int
     quantity: float
     unit_price: float | None = None  # None when the store does not carry the item
-    line_total: float | None = None
+    line_total: float | None = None  # after promotions
+    original_line_total: float | None = None  # before promotions (struck through in the UI)
+    applied_promotion: AppliedPromotion | None = None
     found: bool
 
 
@@ -83,7 +99,10 @@ class StoreComparison(BaseModel):
     store_name: str | None = None
     address: str | None = None
     city: str | None = None
-    total: float                         # sum over the items the store actually has
+    total: float                         # FINAL price — after promotions; ranking uses this
+    base_total: float | None = None      # before promotions
+    total_savings: float | None = None   # base_total − total
+    applied_promotions: list[AppliedPromotion] = []
     found_count: int
     missing_count: int
     missing_product_ids: list[int]
@@ -102,6 +121,7 @@ class BasketCompareResponse(BaseModel):
     shown_store_count: int = 0        # branches returned after the 10-branch cap
     winner_store_id: int | None = None
     message: str | None = None        # e.g. "No stores in this city" when empty
+    promotions_applied: bool = False   # did any branch get a discount?
     stores: list[StoreComparison]
 
 
