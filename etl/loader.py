@@ -3,13 +3,15 @@
 The classic VALUES(col) form is used (not the 8.0.19 row-alias) so PyMySQL's
 executemany can rewrite each group of rows into a single multi-row INSERT.
 
-Resilient to flaky remote/cloud databases: each batch is its OWN transaction and
-is retried with exponential backoff on transient connection drops (MySQL errors
-2013 / 2006 / 1053). Because the upserts are idempotent, retrying a batch — even
-one that may have partially committed — is always safe.
+Resilient to flaky remote/cloud databases AND to six runners writing at once:
+each batch is its OWN transaction, rows are ordered so concurrent writers take
+locks in the same sequence, and the batch is retried with jittered backoff.
+Because the upserts are idempotent, retrying a batch — even one that may have
+partially committed — is always safe.
 """
 from __future__ import annotations
 
+import random
 import sys
 import time
 
@@ -17,15 +19,52 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 
-# MySQL client error codes for a dropped / gone-away connection — safe to retry.
+# Retryable MySQL errors, split by what they MEAN — the right response differs,
+# and treating them alike is what made the deadlocks fatal.
+#
+# Connection-level: the socket is gone. Every pooled connection is dead, so the
+# pool has to be thrown away before a retry can possibly succeed.
 #   2013 Lost connection during query · 2006 Server has gone away · 1053 Shutdown
-_TRANSIENT_CODES = {2013, 2006, 1053}
+_CONNECTION_LOST = {2013, 2006, 1053}
+
+# Lock-level: the connection is perfectly healthy and MySQL has ALREADY rolled
+# our transaction back — that is how it breaks the cycle. Only one thing is
+# needed here: wait, then try again.
+# Disposing the pool for these would be actively harmful, since six parallel
+# runners would then all reconnect at once on top of the contention that caused
+# the deadlock in the first place.
+#   1213 Deadlock found · 1205 Lock wait timeout exceeded
+_LOCK_CONTENTION = {1213, 1205}
+
+_RETRYABLE = _CONNECTION_LOST | _LOCK_CONTENTION
 
 
-def _is_transient(exc: BaseException) -> bool:
+def _mysql_errno(exc: BaseException) -> int | None:
+    """The numeric MySQL error code inside a wrapped driver exception, if any."""
     orig = getattr(exc, "orig", None)
     args = getattr(orig, "args", None)
-    return bool(args) and args[0] in _TRANSIENT_CODES
+    if args and isinstance(args[0], int):
+        return args[0]
+    return None
+
+
+def _lock_ordered(rows: list[dict], key_cols: tuple[str, ...]) -> list[dict]:
+    """Sort a batch by its conflict key so every writer locks in one order.
+
+    This is the fix that stops deadlocks happening, rather than surviving them.
+    InnoDB locks each affected index entry as the multi-row INSERT walks the
+    batch. If one runner's batch reaches barcode X then Y while another reaches
+    Y then X, each holds what the other needs and MySQL kills one with 1213.
+    Sorting on the unique key gives every runner the same acquisition order, so
+    the cycle cannot form — the later writer simply waits.
+
+    Retries below are still needed for the cases ordering cannot cover (gap
+    locks, and contention with the price/store writers), but they stop being the
+    load-bearing part.
+    """
+    # (is-not-None, value) keeps NULLs from being compared against real values;
+    # within a single column the types are homogeneous, so this is total.
+    return sorted(rows, key=lambda r: tuple((r.get(c) is not None, r.get(c)) for c in key_cols))
 
 _STORE_UPSERT = text(
     """
@@ -83,8 +122,9 @@ _SELECT_IDS_BY_BARCODE = text("SELECT id, barcode FROM products WHERE barcode IN
 
 
 class Loader:
-    """DB writer with per-batch transactions and automatic retry on transient
-    connection loss — built for uploading over a flaky WAN to a cloud DB."""
+    """DB writer with per-batch transactions, deterministic lock ordering and
+    jittered retry — built for a flaky WAN to a cloud DB *and* for six matrix
+    runners upserting the same national barcodes at the same moment."""
 
     def __init__(
         self,
@@ -100,43 +140,74 @@ class Loader:
         self.retry_base_delay = retry_base_delay
         self.retry_max_delay = retry_max_delay
 
+    def _backoff(self, attempt: int) -> float:
+        """Exponentially growing wait, randomised across its upper half.
+
+        Plain exponential backoff is the wrong tool when the contention is
+        BETWEEN six GitHub runners: they fail at the same moment, wait the same
+        interval, and collide again on the same rows — the retries themselves
+        become the thundering herd. Randomising the interval is what actually
+        staggers them.
+
+        Jittering only the upper half (rather than [0, window]) keeps a floor
+        under every wait, so a hot batch cannot spin through its whole retry
+        budget in a few milliseconds.
+        """
+        window = min(self.retry_base_delay * (2**attempt), self.retry_max_delay)
+        return random.uniform(window / 2, window)
+
     def _with_retry(self, operation, what: str):
-        """Run `operation()`, retrying transient DB drops with exponential backoff."""
-        delay = self.retry_base_delay
+        """Run `operation()`, retrying the DB failures that are worth retrying.
+
+        No explicit rollback appears here on purpose. `_commit_batch` runs inside
+        `engine.begin()`, whose context manager rolls the transaction back when
+        an exception leaves the block and returns a clean connection to the pool;
+        on a deadlock MySQL has rolled it back already. Adding a manual
+        `.rollback()` would act on a transaction that no longer exists.
+        """
         for attempt in range(self.max_retries + 1):  # 1 initial try + max_retries
             try:
                 return operation()
             except OperationalError as exc:
-                if attempt >= self.max_retries or not _is_transient(exc):
+                errno = _mysql_errno(exc)
+                if errno not in _RETRYABLE or attempt >= self.max_retries:
                     raise
-                code = exc.orig.args[0] if getattr(exc, "orig", None) else "?"
+
+                if errno in _CONNECTION_LOST:
+                    # Dead socket: the pool holds unusable connections. Drop it.
+                    # NOT done for lock errors — see _LOCK_CONTENTION above.
+                    self.engine.dispose()
+
+                delay = self._backoff(attempt)
+                kind = "deadlock/lock wait" if errno in _LOCK_CONTENTION else "connection lost"
                 print(
-                    f"  ! transient DB error {code} during {what} — retry "
-                    f"{attempt + 1}/{self.max_retries} in {delay:.0f}s",
+                    f"  ! {kind} ({errno}) during {what} — retry "
+                    f"{attempt + 1}/{self.max_retries} in {delay:.1f}s",
                     file=sys.stderr,
                 )
-                self.engine.dispose()  # drop the whole (possibly stale) pool → fresh conn
                 time.sleep(delay)
-                delay = min(delay * 2, self.retry_max_delay)
 
     def _commit_batch(self, sql, batch: list[dict]) -> None:
-        # a fresh connection from the pool (pre-ping) + its own short transaction
+        # A fresh connection from the pool (pre-ping) + its own short transaction.
+        # `begin()` commits on clean exit and rolls back on any exception.
         with self.engine.begin() as conn:
             conn.execute(sql, batch)
 
-    def _executemany(self, sql, rows: list[dict]) -> None:
+    def _executemany(self, sql, rows: list[dict], key_cols: tuple[str, ...]) -> None:
+        rows = _lock_ordered(rows, key_cols)
         for i in range(0, len(rows), self.batch_size):
             batch = rows[i : i + self.batch_size]
             self._with_retry(lambda b=batch: self._commit_batch(sql, b), "upsert batch")
 
     def upsert_stores(self, rows: list[dict]) -> None:
-        self._executemany(_STORE_UPSERT, rows)
+        self._executemany(_STORE_UPSERT, rows, ("chain_id", "sub_chain_id", "store_code"))
 
     def upsert_products(self, rows: list[dict]) -> None:
-        self._executemany(_PRODUCT_UPSERT, rows)
+        # The hot one: every chain re-inserts the same national barcodes.
+        self._executemany(_PRODUCT_UPSERT, rows, ("barcode",))
 
     def upsert_prices(self, rows: list[dict]) -> None:
-        self._executemany(_PRICE_UPSERT, rows)
+        self._executemany(_PRICE_UPSERT, rows, ("product_id", "store_id"))
 
     def load_store_map(self) -> dict[tuple[str, str], int]:
         """{(chain_id, store_code): store_id} — store_code already normalized."""
