@@ -71,8 +71,10 @@ class Settings(BaseSettings):
     gh_ref: str = "main"             # branch the workflow runs on
 
     # ── Kaggle / automated ETL ───────────────────────────────
-    # Dataset reference "owner/dataset-name" on Kaggle.
-    kaggle_dataset: str = "erlichsefi/israeli-supermarkets-data"
+    # Dataset reference "owner/dataset-slug" on Kaggle. The slug is NOT the
+    # dataset's title: this one is titled "israeli-supermarkets-data" but lives
+    # at .../israeli-supermarkets-2024. Getting it wrong yields 403, not 404.
+    kaggle_dataset: str = "erlichsefi/israeli-supermarkets-2024"
     # Directory that holds kaggle.json (KAGGLE_CONFIG_DIR for the kaggle pkg).
     kaggle_config_dir: str = str(PROJECT_ROOT / "secrets")
     # Weekly schedule (Sunday 03:00 local time).

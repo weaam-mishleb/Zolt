@@ -3,4 +3,10 @@
 SQLAlchemy>=2.0
 PyMySQL>=1.1
 pydantic-settings>=2.3
-kaggle>=1.6        # automated dataset download (scheduler)
+# Pinned, like everything else here. `kaggle>=1.6` let CI float onto the 2.x
+# rewrite, which talks to api.kaggle.com and reports a failed dataset lookup as
+# a bare "403 Forbidden for url: .../GetDatasetMetadata" — no reason, no ref.
+# 1.6.17 said "Permission 'datasets.get' was denied", which is what finally
+# pointed at the dataset instead of the credentials. 2.2.0 works correctly; it
+# is just far less forthcoming when something is wrong.
+kaggle==2.2.0      # automated dataset download (scheduler)

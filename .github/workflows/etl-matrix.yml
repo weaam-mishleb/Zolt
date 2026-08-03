@@ -44,7 +44,12 @@ env:
   # override per-run with the `dataset` input. Deliberately NOT a placeholder —
   # an unreplaced one once made every download fail while the jobs still went
   # green.
-  KAGGLE_DATASET: ${{ inputs.dataset || 'erlichsefi/israeli-supermarkets-data' }}
+  # NOTE: the slug is `israeli-supermarkets-2024`; the dataset's TITLE is
+  # "israeli-supermarkets-data", which is not the same thing. Using the title as
+  # the ref returns 403 "Permission 'datasets.get' was denied" — not 404 — which
+  # reads exactly like an auth failure and cost a long detour through tokens and
+  # SMS verification. The preflight step below now names this outright.
+  KAGGLE_DATASET: ${{ inputs.dataset || 'erlichsefi/israeli-supermarkets-2024' }}
   KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
   KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
@@ -92,6 +97,45 @@ jobs:
         run: |
           pip install -r etl/requirements.txt
           python -m scripts.init_db
+
+      # Fail once, here, with a precise reason — not 30 identical times in the
+      # matrix.
+      #
+      # Kaggle answers an unknown or invisible dataset ref with
+      #     403 "Permission 'datasets.get' was denied"
+      # rather than 404. That reads exactly like an auth failure, and it cost a
+      # long detour through fresh API tokens, SMS verification and re-entering
+      # secrets before the real cause surfaced: the ref was the dataset's TITLE
+      # ("israeli-supermarkets-data") instead of its slug
+      # ("israeli-supermarkets-2024"). This step tells the two apart by probing
+      # credentials separately from the dataset.
+      - name: Preflight — Kaggle credentials and dataset access
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -z "${KAGGLE_USERNAME:-}" ] || [ -z "${KAGGLE_KEY:-}" ]; then
+            echo "::error::KAGGLE_USERNAME / KAGGLE_KEY secrets are not set"
+            exit 1
+          fi
+
+          # Probe auth on its own, against something every account can see.
+          if ! kaggle datasets list -s titanic >/dev/null 2>&1; then
+            echo "::error::Kaggle rejected these credentials — the API key is invalid or revoked. Generate a new token at Kaggle → Settings → API and update the repository secrets."
+            exit 1
+          fi
+          echo "· credentials accepted by Kaggle"
+
+          if ! kaggle datasets files "$KAGGLE_DATASET" >/dev/null 2>&1; then
+            echo "::error::Credentials are VALID, but dataset '$KAGGLE_DATASET' is not reachable — this is a wrong dataset ref, not a permissions problem."
+            echo "Kaggle returns 403 'Permission datasets.get was denied' (not 404) for a ref that does not exist or is private."
+            echo "The ref is the slug in the dataset URL, which is NOT necessarily the dataset's title."
+            echo "Find the real slug with:  kaggle datasets list -s '<search terms>'"
+            exit 1
+          fi
+          echo "· dataset $KAGGLE_DATASET is reachable"
 
   # ── 2. One isolated job per chain ──────────────────────────────────────────
   load:
