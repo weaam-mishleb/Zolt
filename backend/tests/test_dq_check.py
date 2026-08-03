@@ -11,6 +11,7 @@ import pytest
 
 from scripts.dq_check import (
     MAX_BAD_PRICE_SHARE,
+    MAX_BARCODE_NAME_SHARE,
     MIN_PRICES_PER_CHAIN,
     MIN_STORES_PER_CHAIN,
     chain_id_for,
@@ -27,10 +28,11 @@ class _FakeResult:
 
 
 class _FakeConn:
-    """Returns store count then price count, in the order check_chain asks."""
+    """Returns store count, price count, then barcode-named share — the order
+    check_chain asks for them."""
 
-    def __init__(self, stores, prices):
-        self._answers = [stores, prices]
+    def __init__(self, stores, prices, barcode_named):
+        self._answers = [stores, prices, barcode_named]
 
     def execute(self, *_a, **_kw):
         return _FakeResult(self._answers.pop(0))
@@ -43,11 +45,12 @@ class _FakeConn:
 
 
 class _FakeEngine:
-    def __init__(self, stores, prices):
+    def __init__(self, stores, prices, barcode_named=0.0):
         self.stores, self.prices = stores, prices
+        self.barcode_named = barcode_named
 
     def connect(self):
-        return _FakeConn(self.stores, self.prices)
+        return _FakeConn(self.stores, self.prices, self.barcode_named)
 
 
 @pytest.fixture
@@ -126,6 +129,38 @@ def test_exactly_at_the_thresholds_passes(store_csv):
     assert check_chain(
         _FakeEngine(stores=MIN_STORES_PER_CHAIN, prices=MIN_PRICES_PER_CHAIN), "edge", d
     ) == []
+
+
+# ── products named after their own item code ────────────────────────────────
+def test_a_chain_loaded_with_barcode_names_fails(store_csv):
+    """King Store et al. shipped `itemnm`, not `itemname`. The loader read only
+    `itemname`, so every product loaded named after its item code — full row
+    counts, green job, unusable data. This is the gate for that."""
+    d = store_csv("king_store")
+    problems = check_chain(_FakeEngine(stores=40, prices=300_000, barcode_named=1.0), "king_store", d)
+    assert len(problems) == 1
+    assert "item code" in problems[0]
+    assert "normalize.py" in problems[0]
+
+
+def test_a_normal_share_of_unnamed_products_passes(store_csv):
+    """Real feeds always carry some nameless rows — 3% is the observed worst
+    case for a chain read correctly, and must not fail the job."""
+    d = store_csv("shufersal")
+    assert check_chain(_FakeEngine(stores=421, prices=1_291_647, barcode_named=0.03),
+                       "shufersal", d) == []
+
+
+def test_barcode_name_share_is_not_checked_when_nothing_loaded(store_csv):
+    """No products → SQL AVG returns NULL. The empty-load checks own that case;
+    this one must not add a confusing second complaint."""
+    d = store_csv("ghost")
+    problems = check_chain(_FakeEngine(stores=0, prices=0, barcode_named=None), "ghost", d)
+    assert not any("item code" in p for p in problems)
+
+
+def test_barcode_name_threshold_clears_observed_noise():
+    assert 0.03 < MAX_BARCODE_NAME_SHARE < 1.0
 
 
 def test_bad_price_threshold_is_a_ratio_not_a_count():

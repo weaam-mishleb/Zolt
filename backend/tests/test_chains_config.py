@@ -36,6 +36,15 @@ def test_config_loads_every_enabled_chain():
         assert slug in CHAINS
 
 
+def test_every_disabled_chain_says_why():
+    """A chain parked without a reason gets re-enabled by the next person and
+    fails the nightly run again. Three are currently off because the upstream
+    scraper publishes nothing usable for them, not because of anything we do."""
+    for c in json.loads(_CHAINS_FILE.read_text(encoding="utf-8"))["chains"]:
+        if c.get("enabled", True) is False:
+            assert c.get("reason"), f"{c['slug']} is disabled with no reason"
+
+
 def test_disabled_chains_are_excluded(tmp_path, monkeypatch):
     cfg = tmp_path / "chains.json"
     cfg.write_text(json.dumps({"chains": [

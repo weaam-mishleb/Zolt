@@ -35,6 +35,16 @@ MIN_STORES_PER_CHAIN = 1
 # Share of zero/negative prices tolerated before the whole database is flagged.
 MAX_BAD_PRICE_SHARE = 0.001   # 0.1%
 
+# Share of a chain's products allowed to be named after their own item code.
+#
+# `normalize_price` falls back to the barcode when a row carries no name, so a
+# chain whose name column we failed to read loads at ~100% barcode-named: right
+# row count, right price count, every existing gate green — and worthless, since
+# all matching here is by name. Measured across the 33-chain snapshot, a chain
+# read correctly sits at 0.0–3.0%; the failure signature is 100%. 25% is clear
+# of the noise and nowhere near the failure.
+MAX_BARCODE_NAME_SHARE = 0.25
+
 
 def chain_id_for(slug: str, data_dir: Path) -> str | None:
     """Read the numeric chain id from the chain's own store file.
@@ -77,6 +87,24 @@ def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
             ),
             {"c": cid},
         ).scalar()
+        # AVG over a boolean gives the share directly. NULL when the chain has no
+        # products at all — the empty-load checks below already cover that case.
+        barcode_named = conn.execute(
+            text(
+                "SELECT AVG(pd.name = pd.barcode) FROM ("
+                "  SELECT DISTINCT pr.product_id AS pid FROM prices pr"
+                "  JOIN stores s ON s.id = pr.store_id WHERE s.chain_id = :c"
+                ") t JOIN products pd ON pd.id = t.pid"
+            ),
+            {"c": cid},
+        ).scalar()
+
+    if barcode_named is not None and float(barcode_named) > MAX_BARCODE_NAME_SHARE:
+        problems.append(
+            f"{float(barcode_named):.1%} of this chain's products are named after their own "
+            f"item code (max {MAX_BARCODE_NAME_SHARE:.0%}) — the feed's product-name column "
+            f"was not read. Check the aliases in etl/normalize.py against this chain's header"
+        )
 
     if stores < MIN_STORES_PER_CHAIN:
         problems.append(f"no stores loaded for chain_id={cid} (expected ≥{MIN_STORES_PER_CHAIN})")
@@ -87,7 +115,11 @@ def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
         )
 
     if not problems:
-        print(f"  ✓ {slug}: chain_id={cid} · {stores:,} stores · {prices:,} prices", flush=True)
+        named = "" if barcode_named is None else f" · {1 - float(barcode_named):.1%} named"
+        print(
+            f"  ✓ {slug}: chain_id={cid} · {stores:,} stores · {prices:,} prices{named}",
+            flush=True,
+        )
     return problems
 
 

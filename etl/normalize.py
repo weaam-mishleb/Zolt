@@ -3,6 +3,26 @@
 Both store and price rows are accessed *by column name* (not position) because
 the chains ship the same column names in different orders (e.g. Shufersal's
 store file orders/omits columns differently from Rami Levy / Osher Ad).
+
+They also ship them under different *names*. The price feed is not one schema:
+counted across all 33 chain files in the Kaggle snapshot,
+
+    itemname          23 chains   itemnm             12 chains
+    manufacturername  20 chains   manufacturename    20 chains
+    priceupdatetime   20 chains   priceupdatedate    20 chains
+    unitofmeasure     31 chains   unitmeasure         2 chains
+    bisweighted       31 chains   blsweighted         1 chain
+
+so every varying column is read through an alias list (`first_alias`) rather
+than a single name. Where a chain ships both spellings the alternate is blank or
+identical — zero disagreeing rows across the snapshot — so first-non-empty-wins
+is safe.
+
+This is not cosmetic. Reading only `itemname` made 10 chains load every product
+named after its own item code, which passes every count-based gate and is
+useless downstream, because all product matching in this system is name-based.
+Store files, by contrast, are uniform across all 31 chains that publish one —
+no aliasing needed there.
 """
 from __future__ import annotations
 
@@ -33,6 +53,20 @@ def clean_str(v) -> str | None:
     if s.lower() in _PLACEHOLDERS:
         return None
     return s
+
+
+def first_alias(row: dict, *names: str) -> str | None:
+    """First alias in `names` that carries a real value, else None.
+
+    The chains disagree on column *names*, not just their order — see the table
+    in the module docstring. Falling back through the aliases is what keeps a
+    chain from loading with a whole field silently blank.
+    """
+    for name in names:
+        v = clean_str(row.get(name))
+        if v is not None:
+            return v
+    return None
 
 
 def norm_code(v) -> str | None:
@@ -106,12 +140,15 @@ def normalize_price(row: dict) -> dict | None:
     return {
         # product
         "barcode": barcode,
-        "name": clean_str(row.get("itemname")) or barcode,
-        "manufacturer": clean_str(row.get("manufacturename")),
+        # The barcode fallback keeps the NOT NULL column satisfied, but a chain
+        # loading mostly barcode-named products means its name column was missed
+        # — scripts.dq_check fails the job on that.
+        "name": first_alias(row, "itemname", "itemnm") or barcode,
+        "manufacturer": first_alias(row, "manufacturername", "manufacturename"),
         "unit_qty": clean_str(row.get("unitqty")),
         "quantity": to_decimal(row.get("quantity")),
-        "unit_of_measure": clean_str(row.get("unitofmeasure")),
-        "is_weighted": bool(to_bool(row.get("bisweighted"))),
+        "unit_of_measure": first_alias(row, "unitofmeasure", "unitmeasure"),
+        "is_weighted": bool(to_bool(first_alias(row, "bisweighted", "blsweighted"))),
         # join keys
         "chain_id": chain_id,
         "store_code": store_code,
@@ -120,5 +157,5 @@ def normalize_price(row: dict) -> dict | None:
         "unit_price": to_decimal(row.get("unitofmeasureprice")),
         "allow_discount": True if allow is None else allow,  # column is NOT NULL
         "item_status": clean_str(row.get("itemstatus")),
-        "price_update_time": parse_dt(row.get("priceupdatetime")),
+        "price_update_time": parse_dt(first_alias(row, "priceupdatetime", "priceupdatedate")),
     }
