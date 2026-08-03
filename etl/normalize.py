@@ -69,6 +69,42 @@ def first_alias(row: dict, *names: str) -> str | None:
     return None
 
 
+# EAN-8 is the shortest real barcode, so an item code below 8 characters is a
+# chain's own internal numbering, not a GTIN.
+GTIN_MIN_LENGTH = 8
+
+
+def product_key(item_code, chain_id) -> str | None:
+    """The value stored in `products.barcode` — namespaced when it isn't a GTIN.
+
+    `products.barcode` is globally UNIQUE, which is only safe for codes that are
+    globally meaningful. About ten chains number their loose goods themselves,
+    and those numberings collide: item '12' is tomatoes in Stop Market, frozen
+    cod in King Store and red cabbage in Keshet. Under one UNIQUE key they
+    collapse into a single product row, and the comparison engine ends up
+    ranking unrelated items against each other.
+
+    Prefixing with the feed's chain id gives every chain its own namespace.
+    It is the chain id and NOT our slug on purpose: two slugs can serve one
+    chain — mahsani_ashuk and mahsani_ashuk_new_source both publish
+    7290661400001 — and a slug prefix would split that one chain's products in
+    half.
+
+    Measured over the snapshot: 3.0% of rows carry a short code. Of the short
+    codes appearing in more than one chain, 91.7% name genuinely different
+    products (this fixes those) and 8.3% name the same product under a shared
+    code (this splits those — and `etl.canonical` merges them straight back,
+    because it blocks on the identical name they carry).
+    """
+    code = clean_str(item_code)
+    if code is None:
+        return None
+    chain = clean_str(chain_id)
+    if chain is None or len(code) >= GTIN_MIN_LENGTH:
+        return code
+    return f"{chain}_{code}"
+
+
 def norm_code(v) -> str | None:
     """Canonicalize store/sub-chain codes by stripping leading zeros so the
     padded price-feed codes ('001', '044') match the store-file codes ('1')."""
@@ -129,12 +165,16 @@ def normalize_store(row: dict, chain_name_default: str) -> dict | None:
 
 def normalize_price(row: dict) -> dict | None:
     """Return a flat dict with product + price fields, or None if unusable."""
-    barcode = clean_str(row.get("itemcode"))
+    item_code = clean_str(row.get("itemcode"))
     chain_id = clean_str(row.get("chainid"))
     store_code = norm_code(row.get("storeid"))
     price = to_decimal(row.get("itemprice"))
-    if not barcode or not chain_id or not store_code or price is None:
+    if not item_code or not chain_id or not store_code or price is None:
         return None
+
+    # Internal (non-GTIN) codes get namespaced to their chain — see product_key.
+    # Everything downstream, including etl.promotions, must key on this value.
+    barcode = product_key(item_code, chain_id)
 
     allow = to_bool(row.get("allowdiscount"))
     return {

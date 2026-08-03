@@ -24,7 +24,7 @@ from pathlib import Path
 from sqlalchemy import bindparam, text
 
 from .config import BATCH_SIZE, CHAINS, CHUNK_SIZE, DEFAULT_DATA_DIR, promo_file
-from .normalize import clean_str, norm_code, parse_dt
+from .normalize import clean_str, norm_code, parse_dt, product_key
 from .promo_formats import EXTRACTORS, classify_reward, detect_family
 
 _PROMO_UPSERT = text(
@@ -222,8 +222,17 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
                     ).all():
                         id_of[(chain, sid, src)] = pid
 
-        # 3. barcode → canonical_id, then link
-        wanted = {i["itemcode"] for p in promos for i in p["_items"] if i.get("itemcode")}
+        # 3. barcode → canonical_id, then link.
+        #    The promo feed carries raw item codes, but products.barcode stores
+        #    non-GTIN codes namespaced per chain, so the same transform has to be
+        #    applied on the way in — otherwise every short-code promotion silently
+        #    resolves to nothing and only the unresolved counter would show it.
+        wanted = {
+            key
+            for p in promos
+            for i in p["_items"]
+            if (key := product_key(i.get("itemcode"), p["chain_id"]))
+        }
         canon = cache.resolve(wanted)
         stats["items_unresolved"] += len(wanted) - len(canon)
 
@@ -233,7 +242,7 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
             if pid is None:
                 continue
             for it in p["_items"]:
-                cid = canon.get(it.get("itemcode"))
+                cid = canon.get(product_key(it.get("itemcode"), p["chain_id"]))
                 if cid is None:
                     continue
                 key = (pid, cid, it.get("is_gift", 0))
