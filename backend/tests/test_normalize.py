@@ -130,6 +130,15 @@ def test_one_chain_keeps_one_namespace_across_its_slugs():
     assert product_key("12", "7290661400001") == product_key("12", "7290661400001")
 
 
+def test_a_namespaced_key_can_never_be_mistaken_for_a_legacy_row():
+    """scripts.purge_legacy_barcodes deletes every product whose barcode is
+    shorter than GTIN_MIN_LENGTH. Feed chain ids are 13 digits throughout the
+    snapshot, so a namespaced key is at least 15 characters — the purge can
+    never reach a row this normalizer just wrote."""
+    for code in ("1", "12", "1234567"):
+        assert len(product_key(code, KING_STORE)) > GTIN_MIN_LENGTH
+
+
 def test_product_key_passes_through_missing_input():
     assert product_key(None, KING_STORE) is None
     assert product_key("", KING_STORE) is None

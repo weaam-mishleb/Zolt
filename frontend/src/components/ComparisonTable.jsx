@@ -8,6 +8,12 @@ const ils = new Intl.NumberFormat('he-IL', {
 
 const storeLabel = (s) => s.store_name || `סניף ${s.store_id}`
 
+// A product the feed shipped with no name falls back to its code. Internal
+// (non-GTIN) codes are stored namespaced as "<chainId>_<code>" so they stay
+// unique across chains — that namespace is a storage detail, not something to
+// put in front of a shopper.
+const productCode = (barcode) => (barcode || '').replace(/^\d{13}_/, '')
+
 function itemsByProduct(store) {
   const map = {}
   for (const it of store.items) map[it.product_id] = it
@@ -161,7 +167,7 @@ export default function ComparisonTable({ result }) {
           <tbody>
             {products.map((p) => (
               <tr key={p.id} className="group">
-                <td className={stickyBody}>{p.name || p.barcode}</td>
+                <td className={stickyBody}>{p.name || productCode(p.barcode)}</td>
                 {stores.map((s) => {
                   const it = maps[s.store_id][p.id]
                   const isWinner = s.store_id === winner_store_id
