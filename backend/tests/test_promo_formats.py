@@ -14,6 +14,7 @@ import pytest
 from etl.promo_formats import (
     EXTRACTORS,
     _as_list,
+    _fit_rate,
     classify_reward,
     detect_family,
     extract_flat_family,
@@ -122,6 +123,62 @@ def test_groups_family_hoists_per_item_pricing_to_the_header():
     assert header["max_qty"] is None                          # 'NO_BODY' → NULL
     assert header["min_basket_amount"] == 0
     assert len(items) == 2
+
+
+# ── discount_rate has to fit DECIMAL(6,3) ───────────────────────────────────
+def test_a_rate_that_cannot_be_a_fraction_is_dropped():
+    """Victory ships 162 headers with rates like -94400. The whole-percent rule
+    only fires above 1, so negatives were never normalized, and MySQL rejected
+    the INSERT — killing that chain's entire promotion load over one row."""
+    assert _fit_rate(Decimal("-94400")) is None
+    assert _fit_rate(Decimal("1000")) is None
+    assert _fit_rate(Decimal("-1000")) is None
+    assert _fit_rate(None) is None
+
+
+def test_storable_rates_are_left_alone():
+    assert _fit_rate(Decimal("0.305")) == Decimal("0.305")
+    assert _fit_rate(Decimal("999.999")) == Decimal("999.999")
+    assert _fit_rate(Decimal("1.4286")) == Decimal("1.4286")   # real max in the feed
+    assert _fit_rate(Decimal("-0.5")) == Decimal("-0.5")       # odd, but storable
+
+
+def test_a_junk_rate_does_not_take_the_rest_of_the_promotion_with_it():
+    """The row still loads; only the unusable field is dropped. These promos are
+    FIXED_PRICE / NTH_FREE, which the engine prices from the other columns."""
+    row = _groups_row()
+    node = json.loads(row["groups"])
+    node["group"]["promotionitems"]["promotionitem"][0]["discountrate"] = "-94400"
+    row["groups"] = json.dumps(node)
+
+    (header, items), = extract_groups_family(row)
+    assert header["discount_rate"] is None
+    assert header["discounted_price"] == 36        # still priced
+    assert header["min_qty"] == 2
+    assert len(items) == 2
+
+
+def test_whole_percent_normalization_runs_before_the_bound():
+    """3000 in the feed is 30%, and must survive — the bound is applied after
+    the /100, not instead of it."""
+    row = _groups_row()
+    node = json.loads(row["groups"])
+    node["group"]["promotionitems"]["promotionitem"][0]["discountrate"] = "3000"
+    row["groups"] = json.dumps(node)
+
+    (header, _), = extract_groups_family(row)
+    assert header["discount_rate"] == Decimal("30")
+
+
+def test_items_and_flat_families_guard_the_rate_too():
+    items_row = {"promotionid": "1", "discountrate": "-94400",
+                 "promotionitems": json.dumps({"item": {"itemcode": "123"}})}
+    (header, _), = extract_items_family(items_row)
+    assert header["discount_rate"] is None
+
+    flat_row = {"promotionid": "1", "itemcode": "123", "discountrate": "-94400"}
+    (header, _), = extract_flat_family(flat_row)
+    assert header["discount_rate"] is None
 
 
 def test_groups_family_keeps_multiple_groups_distinct():

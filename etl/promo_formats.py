@@ -46,6 +46,31 @@ def _num(v):
     return to_decimal(_val(v))
 
 
+# promotions.discount_rate is DECIMAL(6,3): three integer digits, so |value|
+# must stay under 1000.
+_RATE_LIMIT = 1000
+
+
+def _fit_rate(rate):
+    """Keep a discount rate only if it can actually be one, else None.
+
+    Victory ships 162 headers carrying rates like -94400. Nothing normalizes
+    them — the whole-percent rule below only fires on values ABOVE 1, so
+    negatives pass through untouched — and MySQL then rejects the INSERT with
+    "Out of range value for column 'discount_rate'". One such row used to abort
+    that chain's entire promotion load.
+
+    Dropping the value costs nothing: every out-of-range rate in the feed sits
+    on a FIXED_PRICE or NTH_FREE promotion, and the engine prices those from
+    discounted_price and min_qty. A rate that cannot be a fraction is not
+    information, so NULL is the honest thing to store — the same instinct as
+    `_clamp` in etl.promotions: never let one malformed field kill a batch.
+    """
+    if rate is None or abs(rate) >= _RATE_LIMIT:
+        return None
+    return rate
+
+
 def _as_list(node, key: str) -> list[dict]:
     """Unwrap {key: X} where X may be a dict (single) or a list (many).
 
@@ -96,7 +121,7 @@ def extract_items_family(row: dict) -> list[tuple[dict, list[dict]]]:
     header = {
         "promo_id_src": _val(row.get("promotionid")),
         "description": _val(row.get("promotiondescription")),
-        "discount_rate": _num(row.get("discountrate")),
+        "discount_rate": _fit_rate(_num(row.get("discountrate"))),
         "discount_amount": _num(row.get("discountamount")),
         "discounted_price": _num(row.get("discountedprice")),
         "min_qty": _num(row.get("minqty")),
@@ -137,6 +162,7 @@ def extract_groups_family(row: dict) -> list[tuple[dict, list[dict]]]:
         rate = _num(first.get("discountrate"))
         if rate is not None and rate > 1:      # this family sends whole percent
             rate = rate / 100
+        rate = _fit_rate(rate)                 # applied AFTER, so 3000 → 30 survives
 
         header = {
             # A promo id can carry several groups with different terms — the
@@ -172,7 +198,7 @@ def extract_flat_family(row: dict) -> list[tuple[dict, list[dict]]]:
     header = {
         "promo_id_src": _val(row.get("promotionid")),
         "description": _val(row.get("promotiondescription")),
-        "discount_rate": _num(row.get("discountrate")),
+        "discount_rate": _fit_rate(_num(row.get("discountrate"))),
         "discount_amount": _num(row.get("discountamount")),
         "discounted_price": _num(row.get("discountedprice")),
         "min_qty": _num(row.get("minqty")),
