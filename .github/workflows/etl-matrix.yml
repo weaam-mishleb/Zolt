@@ -96,6 +96,12 @@ jobs:
           DB_SSL: "true"
         run: |
           pip install -r etl/requirements.txt
+          # Say WHICH layer is broken before spending 8 retries and a 100-line
+          # traceback on "Lost connection to MySQL server during query" — a
+          # message that covers a refused socket, a proxy with nothing behind
+          # it, bad credentials and a genuinely dropped query alike. A real
+          # outage once read as a client bug and cost two full runs.
+          python -m scripts.db_probe --github
           python -m scripts.init_db
 
       # Fail once, here, with a precise reason — not 30 identical times in the
