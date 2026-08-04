@@ -102,6 +102,24 @@ jobs:
           # it, bad credentials and a genuinely dropped query alike. A real
           # outage once read as a client bug and cost two full runs.
           python -m scripts.db_probe --github
+
+          # Raise the buffer pool BEFORE anything writes.
+          #
+          # The managed instance ships with innodb_buffer_pool_size = 1 GB on a
+          # 24 GB container, against a 1,619 MB working set — prices alone is
+          # 1,068 MB. Every upsert therefore probed an uncached index, which is
+          # what took throughput down to ~300 rows/s and got the big chains
+          # cancelled at the job timeout.
+          #
+          # The variable is dynamic, so this needs no config file and no
+          # restart. It runs on EVERY workflow rather than once by hand because
+          # a container restart puts it straight back to 1 GB.
+          #
+          # Best-effort by design: if the grant is missing or the host refuses,
+          # it warns and continues. A slower load is bad; a load that will not
+          # start because a tuning step failed is worse.
+          python -m scripts.tune_innodb --gib 8
+
           python -m scripts.init_db
 
       # Fail once, here, with a precise reason — not 30 identical times in the
