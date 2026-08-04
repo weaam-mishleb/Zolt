@@ -216,8 +216,19 @@ jobs:
           python -m etl.run $FLAGS
 
       # Canonical ids must exist before promotion items can link to them.
-      - name: Resolve canonical products
-        run: python -m etl.canonical
+      #
+      # --chains is not optional here. Unscoped, all six concurrent runners
+      # resolved every product in the database, produced identical groupings,
+      # and then each rewrote all ~178k canonical_products rows to refresh
+      # member_count — the redundant work was cheap, the lock contention was
+      # what timed the workflow out. Scoped, a runner touches only the products
+      # its own chain prices.
+      #
+      # Grouping stays cross-chain regardless: canonical_products is
+      # UNIQUE(name_norm, size_signature) and the write is an upsert, so the
+      # second chain to meet a blocking key joins the existing row.
+      - name: Resolve canonical products — ${{ matrix.name }}
+        run: python -m etl.canonical --chains "$CHAIN"
 
       - name: Load promotions — ${{ matrix.name }}
         if: env.LOAD_PROMOTIONS == 'true'

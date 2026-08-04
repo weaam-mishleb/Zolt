@@ -1,6 +1,7 @@
 """ETL configuration: data location, supported chains, batch sizes."""
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -75,3 +76,23 @@ def price_file(data_dir: Path, slug: str, full: bool = False) -> Path:
 def promo_file(data_dir: Path, slug: str, full: bool = False) -> Path:
     name = f"promo_full_file_{slug}.csv" if full else f"promo_file_{slug}.csv"
     return data_dir / name
+
+
+def chain_id_for(slug: str, data_dir: Path) -> str | None:
+    """Read the numeric chain id from the chain's own store file.
+
+    The DB keys chains by the feed's numeric id, not by our slug, so the file is
+    the only authoritative bridge between the two. Lives here rather than in one
+    caller because both `scripts.dq_check` and `etl.canonical` need it to turn a
+    matrix slug into something they can filter the database on.
+    """
+    path = store_file(data_dir, slug)
+    if not path.exists():
+        return None
+    csv.field_size_limit(10**9)
+    with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
+        for row in csv.DictReader(fh):
+            cid = (row.get("chainid") or "").strip()
+            if cid and cid.lower() not in {"none", "null", ""}:
+                return cid
+    return None

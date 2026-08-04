@@ -20,13 +20,15 @@ Usage (whole DB, after a full run):
 from __future__ import annotations
 
 import argparse
-import csv
 import sys
 from pathlib import Path
 
 from sqlalchemy import text
 
-from etl.config import DEFAULT_DATA_DIR, store_file
+# chain_id_for lives in etl.config because etl.canonical needs the same
+# slug → chain_id bridge; re-exported here so `scripts.dq_check.chain_id_for`
+# keeps working for existing callers and tests.
+from etl.config import DEFAULT_DATA_DIR, chain_id_for, store_file
 
 # A chain with fewer prices than this almost certainly failed to load properly;
 # the smallest real chain in the feed carries thousands of rows.
@@ -44,24 +46,6 @@ MAX_BAD_PRICE_SHARE = 0.001   # 0.1%
 # read correctly sits at 0.0–3.0%; the failure signature is 100%. 25% is clear
 # of the noise and nowhere near the failure.
 MAX_BARCODE_NAME_SHARE = 0.25
-
-
-def chain_id_for(slug: str, data_dir: Path) -> str | None:
-    """Read the numeric chain id from the chain's own store file.
-
-    The DB keys chains by the feed's numeric id, not by our slug, so the file is
-    the only authoritative bridge between the two.
-    """
-    path = store_file(data_dir, slug)
-    if not path.exists():
-        return None
-    csv.field_size_limit(10**9)
-    with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
-        for row in csv.DictReader(fh):
-            cid = (row.get("chainid") or "").strip()
-            if cid and cid.lower() not in {"none", "null", ""}:
-                return cid
-    return None
 
 
 def check_chain(engine, slug: str, data_dir: Path) -> list[str]:

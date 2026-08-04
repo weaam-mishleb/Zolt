@@ -187,6 +187,13 @@ class Loader:
                 )
                 time.sleep(delay)
 
+    def run_with_retry(self, operation, what: str = "statement"):
+        """Public entry point for callers that own their SQL but want this
+        module's deadlock handling — `etl.canonical` writes canonical_products
+        and product_map from every chain at once and needs exactly the same
+        protection."""
+        return self._with_retry(operation, what)
+
     def _commit_batch(self, sql, batch: list[dict]) -> None:
         # A fresh connection from the pool (pre-ping) + its own short transaction.
         # `begin()` commits on clean exit and rolls back on any exception.
