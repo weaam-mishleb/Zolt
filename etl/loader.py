@@ -14,6 +14,7 @@ from __future__ import annotations
 import random
 import sys
 import time
+from collections import Counter
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
@@ -37,6 +38,9 @@ _CONNECTION_LOST = {2013, 2006, 1053}
 _LOCK_CONTENTION = {1213, 1205}
 
 _RETRYABLE = _CONNECTION_LOST | _LOCK_CONTENTION
+
+# How often the loader reports throughput on stderr during a long write.
+HEARTBEAT_SECONDS = 30
 
 
 def _mysql_errno(exc: BaseException) -> int | None:
@@ -91,10 +95,16 @@ _PRODUCT_UPSERT = text(
         (:barcode, :name, :manufacturer, :unit_qty, :quantity, :unit_of_measure, :is_weighted)
     ON DUPLICATE KEY UPDATE
         name            = VALUES(name),
-        manufacturer    = VALUES(manufacturer),
-        unit_qty        = VALUES(unit_qty),
-        quantity        = VALUES(quantity),
-        unit_of_measure = VALUES(unit_of_measure),
+        -- COALESCE, not a plain overwrite. The same barcode arrives once per
+        -- branch and the branches disagree about the OPTIONAL fields: measured
+        -- on Rami Levy, unit_of_measure differs across repeats of the same
+        -- product in 35% of cases, manufacturer in 6% — almost always because
+        -- one branch simply omits what another supplies. `= VALUES(col)` let
+        -- whichever branch happened to come last wipe a real value with NULL.
+        manufacturer    = COALESCE(VALUES(manufacturer), manufacturer),
+        unit_qty        = COALESCE(VALUES(unit_qty), unit_qty),
+        quantity        = COALESCE(VALUES(quantity), quantity),
+        unit_of_measure = COALESCE(VALUES(unit_of_measure), unit_of_measure),
         is_weighted     = VALUES(is_weighted)
     """
 )
@@ -154,6 +164,39 @@ class Loader:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.retry_max_delay = retry_max_delay
+        # Heartbeat state. A giant chain writes for tens of minutes with nothing
+        # on stdout, so a run that is merely slow is indistinguishable from one
+        # wedged in a retry loop — that ambiguity cost an hour of watching
+        # Shufersal do nothing visible. Progress goes to etl_jobs, but nobody
+        # reading CI logs can see that table.
+        self._beat_at = time.monotonic()
+        self._rows_since_beat = 0
+        # Per-table, not one running total: the tables are written interleaved,
+        # so a single counter labelled with whichever operation happened to be
+        # current reports a number that belongs to all three.
+        self.rows_written: Counter[str] = Counter()
+        self._retries_total = 0
+
+    def _beat(self, what: str, force: bool = False) -> None:
+        """Emit a throughput line at most every HEARTBEAT_SECONDS."""
+        now = time.monotonic()
+        elapsed = now - self._beat_at
+        if not force and elapsed < HEARTBEAT_SECONDS:
+            return
+        if self._rows_since_beat or force:
+            rate = self._rows_since_beat / elapsed if elapsed > 0 else 0.0
+            print(
+                f"  · {what}: {self.rows_written[what]:,} rows "
+                f"({rate:,.0f}/s overall, {self._retries_total} retries so far)",
+                file=sys.stderr,
+                flush=True,
+            )
+        self._beat_at = now
+        self._rows_since_beat = 0
+
+    def write_summary(self) -> str:
+        """One line naming what actually went to each table."""
+        return " · ".join(f"{k}: {v:,}" for k, v in sorted(self.rows_written.items())) or "no writes"
 
     def _backoff(self, attempt: int) -> float:
         """Exponentially growing wait, randomised across its upper half.
@@ -193,6 +236,7 @@ class Loader:
                     # NOT done for lock errors — see _LOCK_CONTENTION above.
                     self.engine.dispose()
 
+                self._retries_total += 1
                 delay = self._backoff(attempt)
                 kind = "deadlock/lock wait" if errno in _LOCK_CONTENTION else "connection lost"
                 print(
@@ -220,6 +264,9 @@ class Loader:
         for i in range(0, len(rows), self.batch_size):
             batch = rows[i : i + self.batch_size]
             self._with_retry(lambda b=batch: self._commit_batch(sql, b), what)
+            self.rows_written[what] += len(batch)
+            self._rows_since_beat += len(batch)
+            self._beat(what)
 
     def upsert_stores(self, rows: list[dict]) -> None:
         self._executemany(

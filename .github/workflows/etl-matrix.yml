@@ -201,31 +201,62 @@ jobs:
           OPTIONAL=( )
           [ "$LOAD_PROMOTIONS" != "true" ] || OPTIONAL+=( "promo_file_${CHAIN}.csv" )
 
+          # Two different things look like "no file", and they must not share a
+          # fate. A 404 means the upstream scraper did not publish this chain
+          # today — nothing is wrong on our side and there is nothing to load.
+          # Anything else (auth, network, a broken dataset ref) is our problem
+          # and has to stay loud: swallowing it is exactly what once produced 26
+          # green jobs holding zero rows.
+          NOT_PUBLISHED=0
           for f in "store_file_${CHAIN}.csv" "$PRICE" "${OPTIONAL[@]}"; do
             echo "→ $f"
-            kaggle datasets download -d "$KAGGLE_DATASET" -f "$f" -p archive --force --unzip \
-              || echo "::warning::could not download $f"
+            if ! out=$(kaggle datasets download -d "$KAGGLE_DATASET" -f "$f" \
+                         -p archive --force --unzip 2>&1); then
+              echo "$out"
+              if grep -qiE '404|not found' <<<"$out"; then
+                echo "::warning::$f is not in the dataset today (404)"
+                # Only a REQUIRED file turns this into a skip.
+                case "$f" in
+                  "store_file_${CHAIN}.csv"|"$PRICE") NOT_PUBLISHED=1 ;;
+                esac
+              else
+                echo "::error::download of $f failed for a reason other than 404"
+                echo "Dataset '$KAGGLE_DATASET' was reachable at preflight, so this is not the ref."
+                exit 1
+              fi
+            fi
           done
 
           # A single-file download can still arrive zipped depending on size.
           for z in archive/*.zip; do [ -e "$z" ] && unzip -o "$z" -d archive && rm -f "$z"; done || true
           ls -lh archive
 
-          # HARD GATE: a failed download must not look like a successful load.
-          # This is the exact failure that once produced 26 green jobs holding
-          # zero rows.
+          if [ "$NOT_PUBLISHED" = "1" ]; then
+            echo "::warning::${CHAIN}: upstream published no data today — skipping this chain"
+            # Recorded where a human will actually see it. A silent skip that
+            # nobody notices is how a chain quietly disappears for weeks.
+            echo "⚠️ **${CHAIN}** skipped — upstream published no file today (404)" \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "SKIP_CHAIN=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # HARD GATE, still. Files that downloaded but are EMPTY mean the
+          # download half-worked, which is a real failure, not an absent chain.
           for required in "store_file_${CHAIN}.csv" "$PRICE"; do
             if [ ! -s "archive/$required" ]; then
-              echo "::error::required file missing or empty after download: $required"
-              echo "Check that KAGGLE_DATASET ('$KAGGLE_DATASET') is correct and that the"
-              echo "KAGGLE_USERNAME / KAGGLE_KEY secrets can access it."
+              echo "::error::required file present but empty after download: $required"
+              echo "This is not an absent chain — the download itself failed."
               exit 1
             fi
           done
 
       - name: Load prices — ${{ matrix.name }}
+        if: env.SKIP_CHAIN != 'true'
         run: |
-          FLAGS="--chains $CHAIN --batch-size 1000"
+          # Batch size raised from 1000: over a WAN link the per-batch round trip
+          # and commit dominate, so a chain of 1.3M prices paid ~1,300 of them.
+          FLAGS="--chains $CHAIN --batch-size 4000"
           [ "$FULL" = "false" ] || FLAGS="$FLAGS --full"
           python -m etl.run $FLAGS
 
@@ -242,15 +273,19 @@ jobs:
       # UNIQUE(name_norm, size_signature) and the write is an upsert, so the
       # second chain to meet a blocking key joins the existing row.
       - name: Resolve canonical products — ${{ matrix.name }}
+        if: env.SKIP_CHAIN != 'true'
         run: python -m etl.canonical --chains "$CHAIN"
 
       - name: Load promotions — ${{ matrix.name }}
-        if: env.LOAD_PROMOTIONS == 'true'
+        if: env.LOAD_PROMOTIONS == 'true' && env.SKIP_CHAIN != 'true'
         run: python -m etl.promotions --chains "$CHAIN"
 
       # Verifies the chain's data is actually IN the database. A green job that
       # loaded nothing is worse than a red one — it looks like success.
+      # Skipped only when the chain published nothing at all; a chain that
+      # DID download still has to prove its rows reached the database.
       - name: Data-quality gate
+        if: env.SKIP_CHAIN != 'true'
         run: python -m scripts.dq_check --chain "$CHAIN"
 
   # ── 3. Always report, even when some chains failed ─────────────────────────
