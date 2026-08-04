@@ -294,12 +294,42 @@ jobs:
     needs: [plan, load]
     if: always()
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DB_SSL: "true"
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
       - run: |
-          echo "### Nationwide ETL — ${{ needs.plan.outputs.count }} chains" >> $GITHUB_STEP_SUMMARY
+          echo "### Nationwide ETL — ${{ needs.plan.outputs.count }} chains planned" >> $GITHUB_STEP_SUMMARY
           echo "Loader result: **${{ needs.load.result }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Per-chain detail: the job list above, or \`SELECT * FROM etl_jobs ORDER BY id DESC\`." >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.load.result }}" = "failure" ]; then
             echo "::warning::One or more chains failed — the rest loaded successfully."
+          fi
+
+      # A chain whose upstream file 404s is now SKIPPED rather than failed, which
+      # is right — but a skip nobody notices is how a chain quietly disappears
+      # for a month. This compares what is actually in the database against what
+      # was planned, so a shrinking count is visible in the run summary.
+      - name: How many chains are actually in the database
+        if: always()
+        run: |
+          pip install -r etl/requirements.txt >/dev/null
+          PLANNED=${{ needs.plan.outputs.count }}
+          PRESENT=$(python - <<'PY'
+          from backend.app.db import engine
+          from sqlalchemy import text
+          with engine.connect() as c:
+              print(c.execute(text("SELECT COUNT(DISTINCT chain_id) FROM stores")).scalar())
+          PY
+          )
+          echo "Chains present in the database: **$PRESENT** of $PLANNED planned" >> $GITHUB_STEP_SUMMARY
+          python -m scripts.dq_check --all >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          if [ "$PRESENT" -lt "$PLANNED" ]; then
+            echo "::warning::$((PLANNED - PRESENT)) planned chain(s) are not in the database — check the skip warnings above; if a chain has been skipped for days, its upstream feed has stopped."
           fi
