@@ -57,6 +57,11 @@ class _FakeEngine:
     def begin(self):
         return _FakeConn(self.calls)
 
+    def execution_options(self, **_kw):
+        # Loader wraps the engine for READ COMMITTED; the real one returns a
+        # shallow copy over the same pool.
+        return self
+
     def dispose(self):
         pass
 

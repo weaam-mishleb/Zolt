@@ -223,7 +223,7 @@ def resolve(
             )
 
             def _write_canon(payload=payload, new_keys=new_keys):
-                with engine.begin() as conn:
+                with writer.engine.begin() as conn:
                     conn.execute(_CANON_UPSERT, payload)
                     # Read back the ids for the keys we just wrote.
                     return conn.execute(
@@ -259,7 +259,7 @@ def resolve(
             ordered = _lock_ordered(map_batch, ("product_id",))
 
             def _write_map(ordered=ordered):
-                with engine.begin() as conn:
+                with writer.engine.begin() as conn:
                     conn.execute(_MAP_UPSERT, ordered)
 
             writer.run_with_retry(_write_map, "product_map upsert")
@@ -284,7 +284,7 @@ def resolve(
     touched = sorted(set(seen.values()))
     if touched:
         def _refresh(touched=touched):
-            with engine.begin() as conn:
+            with writer.engine.begin() as conn:
                 if chain_ids:
                     for i in range(0, len(touched), 1_000):
                         conn.execute(_REFRESH_MEMBERS, {"ids": touched[i : i + 1_000]})

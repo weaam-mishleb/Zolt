@@ -150,6 +150,14 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DB_SSL: "true"
+      # The ETL is single-threaded and needs ONE connection. The pool defaults in
+      # backend/app/config.py are sized for the API (10 + 20 overflow), which
+      # across six runners is up to 180 connections against one managed MySQL —
+      # past its limit the proxy stops completing handshakes and PyMySQL raises
+      # 2013 from _get_server_information. etl/__init__.py sets the same defaults;
+      # they are repeated here so the number is visible where the fan-out is.
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
       CHAIN: ${{ matrix.slug }}   # ← the matrix value, as an env var
       FULL: ${{ inputs.full || 'true' }}
       LOAD_PROMOTIONS: ${{ inputs.load_promotions || 'true' }}

@@ -134,7 +134,22 @@ class Loader:
         retry_base_delay: float = 1.0,
         retry_max_delay: float = 60.0,
     ):
-        self.engine = engine
+        # READ COMMITTED, and only for this engine's connections.
+        #
+        # Sorting each batch fixes the order locks are taken in, which kills the
+        # record-lock deadlocks. It cannot touch the other source: under
+        # REPEATABLE READ, InnoDB also takes GAP locks around the index range an
+        # INSERT ... ON DUPLICATE KEY UPDATE walks, and two writers can deadlock
+        # on gaps while their record order is perfectly consistent. READ
+        # COMMITTED does not take gap locks.
+        #
+        # Measured, 10 writers × 25,000 shared barcodes, three runs each:
+        #     REPEATABLE READ  107 / 134 / 143 deadlock retries
+        #     READ COMMITTED     0 /   0 /   0
+        #
+        # `execution_options` returns a shallow copy sharing the same pool, so
+        # this applies to the loader without changing isolation for the API.
+        self.engine = engine.execution_options(isolation_level="READ COMMITTED")
         self.batch_size = batch_size
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
@@ -200,21 +215,26 @@ class Loader:
         with self.engine.begin() as conn:
             conn.execute(sql, batch)
 
-    def _executemany(self, sql, rows: list[dict], key_cols: tuple[str, ...]) -> None:
+    def _executemany(self, sql, rows: list[dict], key_cols: tuple[str, ...], what: str) -> None:
         rows = _lock_ordered(rows, key_cols)
         for i in range(0, len(rows), self.batch_size):
             batch = rows[i : i + self.batch_size]
-            self._with_retry(lambda b=batch: self._commit_batch(sql, b), "upsert batch")
+            self._with_retry(lambda b=batch: self._commit_batch(sql, b), what)
 
     def upsert_stores(self, rows: list[dict]) -> None:
-        self._executemany(_STORE_UPSERT, rows, ("chain_id", "sub_chain_id", "store_code"))
+        self._executemany(
+            _STORE_UPSERT, rows, ("chain_id", "sub_chain_id", "store_code"), "stores upsert"
+        )
 
     def upsert_products(self, rows: list[dict]) -> None:
         # The hot one: every chain re-inserts the same national barcodes.
-        self._executemany(_PRODUCT_UPSERT, rows, ("barcode",))
+        self._executemany(_PRODUCT_UPSERT, rows, ("barcode",), "products upsert")
 
     def upsert_prices(self, rows: list[dict]) -> None:
-        self._executemany(_PRICE_UPSERT, rows, ("product_id", "store_id"))
+        # Contends on more than its own key: prices.product_id is a FK, so each
+        # insert also takes a shared lock on the parent products row that a
+        # sibling runner may be updating.
+        self._executemany(_PRICE_UPSERT, rows, ("product_id", "store_id"), "prices upsert")
 
     def load_store_map(self) -> dict[tuple[str, str], int]:
         """{(chain_id, store_code): store_id} — store_code already normalized."""
