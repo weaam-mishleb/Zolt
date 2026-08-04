@@ -192,6 +192,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # WHICH CODE IS THIS JOB RUNNING? "Re-run failed jobs" replays the
+          # ORIGINAL commit and never picks up newer pushes to main, so a job
+          # fixed hours ago keeps failing with the old error and the old wording.
+          # That cost two rounds of debugging — print it where the failure is.
+          echo "::notice::running workflow from commit ${{ github.sha }} — a re-run replays THIS commit, it does not pick up later pushes to main"
           mkdir -p archive
           PRICE="price_file_${CHAIN}.csv"
           [ "$FULL" = "false" ] || PRICE="price_full_file_${CHAIN}.csv"

@@ -9,4 +9,7 @@ pydantic-settings>=2.3
 # 1.6.17 said "Permission 'datasets.get' was denied", which is what finally
 # pointed at the dataset instead of the credentials. 2.2.0 works correctly; it
 # is just far less forthcoming when something is wrong.
-kaggle==2.2.0      # automated dataset download (scheduler)
+# 2.2.2 verified against the live dataset before bumping, on both paths that
+# matter: a present file downloads, and a missing one still reports a greppable
+# "404 Client Error: Not Found" — which the workflow's skip logic depends on.
+kaggle==2.2.2      # automated dataset download (scheduler)
