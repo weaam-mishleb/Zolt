@@ -174,6 +174,13 @@ def load_prices(
 
         seen = 0
         chain_prices = 0
+        # One staging table for the WHOLE chain: the rows land in an unindexed
+        # table as they stream, and the index maintenance happens once, in a
+        # server-side merge that moves no data over the WAN.
+        if loader is not None:
+            from .loader import _PRICE_COLUMNS, _PRICES_STAGE_DDL
+            loader.stage_begin("prices", _PRICES_STAGE_DDL, _PRICE_COLUMNS,
+                               ("product_id", "store_id"))
         for batch in _read_csv_chunks(path, chunksize, on_progress):
             price_rows = []
             products: dict[str, dict] = {}
@@ -231,13 +238,19 @@ def load_prices(
                 )
 
             if loader is not None and upserts:
-                loader.upsert_prices(upserts)
+                loader.stage_add(upserts, "prices upsert")
 
             stats["prices"] += len(upserts)
             chain_prices += len(upserts)
             seen += len(batch)
             if limit_rows and seen >= limit_rows:
                 break
+
+        # End of the chain: one server-side merge, sliced into bounded
+        # transactions. Nothing here crosses the WAN.
+        if loader is not None:
+            from .loader import _PRICE_UPDATE_COLUMNS
+            loader.stage_commit(_PRICE_UPDATE_COLUMNS, "prices upsert")
 
         print(f"  · {slug:<10} rows={seen:<9} prices upserted={chain_prices}")
         bytes_before += path.stat().st_size

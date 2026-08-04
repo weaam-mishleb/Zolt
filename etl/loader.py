@@ -11,6 +11,7 @@ partially committed — is always safe.
 """
 from __future__ import annotations
 
+import os
 import random
 import sys
 import time
@@ -130,6 +131,37 @@ _SELECT_IDS_BY_BARCODE = text("SELECT id, barcode FROM products WHERE barcode IN
     bindparam("bcs", expanding=True)
 )
 
+# Staging table for the bulk-merge path. Column types mirror `prices` exactly so
+# the merge needs no casts — but it deliberately carries NO unique key, NO
+# secondary index and NO foreign keys. That is the entire point: staged inserts
+# are append-only and never probe an index that is too big to stay cached, so
+# only the merge pays for index maintenance.
+# `seq` exists purely to slice the merge into bounded transactions.
+_PRICES_STAGE_DDL = """
+    CREATE TABLE {stage} (
+      seq               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      product_id        INT UNSIGNED    NOT NULL,
+      store_id          INT UNSIGNED    NOT NULL,
+      price             DECIMAL(10,2)   NOT NULL,
+      unit_price        DECIMAL(10,2)   NULL,
+      allow_discount    TINYINT(1)      NOT NULL DEFAULT 1,
+      item_status       VARCHAR(20)     NULL,
+      price_update_time DATETIME        NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+_PRICE_COLUMNS = (
+    "product_id", "store_id", "price", "unit_price",
+    "allow_discount", "item_status", "price_update_time",
+)
+_PRICE_UPDATE_COLUMNS = (
+    "price", "unit_price", "allow_discount", "item_status", "price_update_time",
+)
+
+# Small inputs take the plain path — creating and dropping a table costs more
+# than the merge saves.
+_UPSERTS = {"prices": _PRICE_UPSERT}
+
 
 class Loader:
     """DB writer with per-batch transactions, deterministic lock ordering and
@@ -164,6 +196,7 @@ class Loader:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.retry_max_delay = retry_max_delay
+        self._stage = None
         # Heartbeat state. A giant chain writes for tens of minutes with nothing
         # on stdout, so a run that is merely slow is indistinguishable from one
         # wedged in a retry loop — that ambiguity cost an hour of watching
@@ -278,6 +311,108 @@ class Loader:
         """
         self._executemany(sql, rows, key_cols, what)
 
+    # ── staging-table bulk merge ─────────────────────────────────────────────
+    #
+    # Prices arrive as a stream of ~5,000-row chunks, so the merge cannot be a
+    # per-call decision: staging only pays off if the WHOLE chain lands in one
+    # unindexed table and is merged once. Hence an explicit session —
+    # stage_begin / stage_add per chunk / stage_commit at the end of the chain.
+    def _stage_name(self, target: str) -> str:
+        """A private staging table per target, per process.
+
+        NOT a TEMPORARY table: those are scoped to one connection, and this
+        loader deliberately takes a fresh connection from the pool per batch so
+        a dropped socket costs one batch instead of the whole load. The pid
+        keeps two runners from colliding on the same name.
+        """
+        return f"_stage_{target}_{os.getpid()}"
+
+    def _run(self, sql, params=None) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(sql, params or {})
+
+    def stage_begin(
+        self, target: str, ddl: str, columns: tuple[str, ...], key_cols: tuple[str, ...]
+    ) -> None:
+        """Create the staging table for one chain's worth of rows."""
+        stage = self._stage_name(target)
+        self._stage = {
+            "target": target,
+            "table": stage,
+            "columns": columns,
+            "key_cols": key_cols,
+            "count": 0,
+            "insert": text(
+                f"INSERT INTO {stage} ({', '.join(columns)}) "
+                f"VALUES ({', '.join(':' + c for c in columns)})"
+            ),
+        }
+        self._with_retry(lambda: self._run(text(f"DROP TABLE IF EXISTS {stage}")), "staging setup")
+        self._with_retry(lambda: self._run(text(ddl.format(stage=stage))), "staging setup")
+
+    def stage_add(self, rows: list[dict], what: str) -> None:
+        """Append a chunk to the staging table.
+
+        These inserts are the cheap part: the staging table has no unique key,
+        no secondary index and no foreign keys, so they are append-only and
+        never probe an index too large to stay cached. That is the whole reason
+        this path exists.
+        """
+        if not rows:
+            return
+        st = self._stage
+        rows = _lock_ordered(rows, st["key_cols"])
+        for i in range(0, len(rows), self.batch_size):
+            batch = rows[i : i + self.batch_size]
+            self._with_retry(lambda b=batch: self._commit_batch(st["insert"], b), f"{what} (staging)")
+            st["count"] += len(batch)
+            self._rows_since_beat += len(batch)
+            self._beat(f"{what} (staging)")
+
+    def stage_commit(self, update_cols: tuple[str, ...], what: str) -> None:
+        """Merge the staged rows into the target, then drop the staging table.
+
+        The merge is sliced on the staging primary key rather than run as one
+        statement over the whole table. A single INSERT ... SELECT of 1.3M rows
+        is one transaction with an enormous undo log holding locks for minutes —
+        the same long-transaction mistake that made the promotion writes
+        deadlock. Sliced, each transaction is bounded, and the rows still never
+        cross the WAN a second time: the server reads its own table.
+        """
+        st = self._stage
+        stage, target, columns = st["table"], st["target"], st["columns"]
+        total = st["count"]
+        try:
+            if total:
+                merge = text(
+                    f"INSERT INTO {target} ({', '.join(columns)}) "
+                    f"SELECT {', '.join(columns)} FROM {stage} "
+                    "WHERE seq BETWEEN :lo AND :hi "
+                    # Walk the target's unique index in order within each slice
+                    # instead of jumping around it — the whole reason the target
+                    # index thrashes is random access into pages that are not
+                    # cached.
+                    f"ORDER BY {', '.join(st['key_cols'])} "
+                    "ON DUPLICATE KEY UPDATE "
+                    + ", ".join(f"{c} = VALUES({c})" for c in update_cols)
+                )
+                step = max(self.batch_size, 1)
+                for lo in range(1, total + 1, step):
+                    hi = lo + step - 1
+                    self._with_retry(lambda a=lo, b=hi: self._run(merge, {"lo": a, "hi": b}), what)
+                    done = min(step, total - lo + 1)
+                    self.rows_written[what] += done
+                    self._rows_since_beat += done
+                    self._beat(what)
+        finally:
+            # Never leave one behind: it is invisible to the app and would
+            # quietly consume the buffer pool this path exists to protect.
+            self._stage = None
+            try:
+                self._run(text(f"DROP TABLE IF EXISTS {stage}"))
+            except OperationalError as exc:  # noqa: BLE001 — cleanup must not mask a real error
+                print(f"  ! could not drop {stage}: {exc}", file=sys.stderr)
+
     def upsert_stores(self, rows: list[dict]) -> None:
         self._executemany(
             _STORE_UPSERT, rows, ("chain_id", "sub_chain_id", "store_code"), "stores upsert"
@@ -288,9 +423,7 @@ class Loader:
         self._executemany(_PRODUCT_UPSERT, rows, ("barcode",), "products upsert")
 
     def upsert_prices(self, rows: list[dict]) -> None:
-        # Contends on more than its own key: prices.product_id is a FK, so each
-        # insert also takes a shared lock on the parent products row that a
-        # sibling runner may be updating.
+        """Direct upsert — used when not streaming through a staging session."""
         self._executemany(_PRICE_UPSERT, rows, ("product_id", "store_id"), "prices upsert")
 
     def load_store_map(self) -> dict[tuple[str, str], int]:
