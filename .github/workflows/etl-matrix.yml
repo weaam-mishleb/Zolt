@@ -212,24 +212,29 @@ jobs:
           # Anything else (auth, network, a broken dataset ref) is our problem
           # and has to stay loud: swallowing it is exactly what once produced 26
           # green jobs holding zero rows.
+          # scripts/kaggle_fetch.py owns the classification, because grepping for
+          # "404" here split the world in two and it has three parts. A throttled
+          # download fails with "Expecting value: line 1 column 1 (char 0)" — a
+          # JSONDecodeError from an HTML error page, i.e. a 429/5xx — which is
+          # transient and must be RETRIED, not turned into a red chain.
+          #   exit 0 = downloaded · 3 = not published today · 1 = real failure
           NOT_PUBLISHED=0
           for f in "store_file_${CHAIN}.csv" "$PRICE" "${OPTIONAL[@]}"; do
             echo "→ $f"
-            if ! out=$(kaggle datasets download -d "$KAGGLE_DATASET" -f "$f" \
-                         -p archive --force --unzip 2>&1); then
-              echo "$out"
-              if grep -qiE '404|not found' <<<"$out"; then
-                echo "::warning::$f is not in the dataset today (404)"
-                # Only a REQUIRED file turns this into a skip.
-                case "$f" in
-                  "store_file_${CHAIN}.csv"|"$PRICE") NOT_PUBLISHED=1 ;;
-                esac
-              else
-                echo "::error::download of $f failed for a reason other than 404"
-                echo "Dataset '$KAGGLE_DATASET' was reachable at preflight, so this is not the ref."
-                exit 1
-              fi
-            fi
+            set +e
+            python -m scripts.kaggle_fetch --dataset "$KAGGLE_DATASET" --file "$f" --dest archive
+            rc=$?
+            set -e
+            case "$rc" in
+              0) ;;
+              3) # Only a REQUIRED file turns an absent file into a skipped chain.
+                 case "$f" in
+                   "store_file_${CHAIN}.csv"|"$PRICE") NOT_PUBLISHED=1 ;;
+                 esac ;;
+              *) echo "::error::download of $f failed, and not because it is absent"
+                 echo "Dataset '$KAGGLE_DATASET' was reachable at preflight, so this is not the ref."
+                 exit 1 ;;
+            esac
           done
 
           # A single-file download can still arrive zipped depending on size.

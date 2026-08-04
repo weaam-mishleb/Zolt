@@ -268,6 +268,16 @@ class Loader:
             self._rows_since_beat += len(batch)
             self._beat(what)
 
+    def upsert_many(self, sql, rows: list[dict], key_cols: tuple[str, ...], what: str) -> None:
+        """Run any batched write with this module's protections.
+
+        `etl.promotions` writes promotions and promotion_items and had none of
+        them: no lock ordering, no READ COMMITTED, no retry, and — worst — every
+        batch inside ONE transaction, so a big chain held locks on all its rows
+        at once. Everything that writes concurrently should come through here.
+        """
+        self._executemany(sql, rows, key_cols, what)
+
     def upsert_stores(self, rows: list[dict]) -> None:
         self._executemany(
             _STORE_UPSERT, rows, ("chain_id", "sub_chain_id", "store_code"), "stores upsert"

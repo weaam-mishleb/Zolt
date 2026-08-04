@@ -24,6 +24,7 @@ from pathlib import Path
 from sqlalchemy import bindparam, text
 
 from .config import BATCH_SIZE, CHAINS, CHUNK_SIZE, DEFAULT_DATA_DIR, promo_file
+from .loader import Loader
 from .normalize import clean_str, norm_code, parse_dt, product_key
 from .promo_formats import EXTRACTORS, classify_reward, detect_family
 
@@ -146,6 +147,9 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
         }
 
     cache = _CanonicalCache(engine)
+    # Same protections as the price loader: batches sorted into a shared lock
+    # order, each its OWN transaction, READ COMMITTED, jittered deadlock retry.
+    writer = Loader(engine, batch_size=BATCH_SIZE)
     family, extract = None, None
     chain_promos = chain_links = 0
 
@@ -204,9 +208,9 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
 
         # 1. upsert headers (idempotent on (chain_id, store_id, promo_id_src))
         headers = [{k: v for k, v in p.items() if not k.startswith("_")} for p in promos]
-        with engine.begin() as conn:
-            for i in range(0, len(headers), BATCH_SIZE):
-                conn.execute(_PROMO_UPSERT, headers[i : i + BATCH_SIZE])
+        writer.upsert_many(
+            _PROMO_UPSERT, headers, ("chain_id", "store_id", "promo_id_src"), "promotions upsert"
+        )
 
         # 2. read back surrogate ids
         by_store: dict[tuple[str, int], list[str]] = {}
@@ -252,10 +256,17 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
                 links.append({"promotion_id": pid, "canonical_id": cid,
                               "is_gift": it.get("is_gift", 0)})
 
-        if links:
-            with engine.begin() as conn:
-                for i in range(0, len(links), BATCH_SIZE):
-                    conn.execute(_ITEM_UPSERT, links[i : i + BATCH_SIZE])
+        # promotion_items is the hottest write in the whole pipeline, for a
+        # reason that is easy to miss: its FK points at canonical_products, and
+        # canonical rows are SHARED between chains by design. So each INSERT
+        # takes a shared lock on a parent row that a sibling runner's
+        # etl.canonical may be holding exclusively — a cycle no amount of
+        # INSERT IGNORE avoids, because IGNORE suppresses the duplicate-key
+        # ERROR, never the lock taken to detect it.
+        writer.upsert_many(
+            _ITEM_UPSERT, links, ("promotion_id", "canonical_id", "is_gift"),
+            "promotion_items upsert",
+        )
 
         stats["promotions"] += len(promos)
         stats["links"] += len(links)
