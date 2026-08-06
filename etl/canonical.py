@@ -185,8 +185,14 @@ def resolve(
         if chain_ids:
             stmt = _SELECT_PRODUCTS_FOR_CHAINS
             params["chain_ids"] = chain_ids
-        with engine.connect() as conn:
-            rows = conn.execute(stmt, params).mappings().all()
+        # Reads need the same protection as writes. This SELECT runs while up
+        # to four sibling runners hammer the same server, and an unretried
+        # connection blip here kills a chain that had nothing wrong with it.
+        def _read(stmt=stmt, params=params):
+            with writer.engine.connect() as conn:
+                return conn.execute(stmt, params).mappings().all()
+
+        rows = writer.run_with_retry(_read, "canonical select")
         if not rows:
             break
         after = rows[-1]["id"]

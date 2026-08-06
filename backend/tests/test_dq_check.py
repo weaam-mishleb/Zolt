@@ -45,12 +45,21 @@ class _FakeConn:
 
 
 class _FakeEngine:
+    """The gate's reads now go through Loader's retry policy, so the fake has to
+    satisfy the same small surface a real Engine gives it."""
+
     def __init__(self, stores, prices, barcode_named=0.0):
         self.stores, self.prices = stores, prices
         self.barcode_named = barcode_named
 
     def connect(self):
         return _FakeConn(self.stores, self.prices, self.barcode_named)
+
+    def execution_options(self, **_kw):
+        return self
+
+    def dispose(self):
+        pass
 
 
 @pytest.fixture

@@ -48,6 +48,24 @@ MAX_BAD_PRICE_SHARE = 0.001   # 0.1%
 MAX_BARCODE_NAME_SHARE = 0.25
 
 
+def _with_db_retry(engine, fn):
+    """Run a read through the loader's retry policy.
+
+    Writes have been protected for a while; reads were not, and this gate is the
+    LAST step of a chain's job — the moment the server is most loaded. Reusing
+    Loader keeps one definition of what is worth retrying (deadlocks, lock
+    waits, dropped connections) rather than a second, drifting copy.
+    """
+    from etl.loader import Loader
+
+    return Loader(engine).run_with_retry(lambda: _call(engine, fn), "data-quality read")
+
+
+def _call(engine, fn):
+    with engine.connect() as conn:
+        return fn(conn)
+
+
 def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
     """Return a list of failures for this chain (empty list = healthy)."""
     problems: list[str] = []
@@ -60,7 +78,11 @@ def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
             f"(did the download actually succeed?)"
         ]
 
-    with engine.connect() as conn:
+    # Retried like every other DB call in the pipeline. This gate runs LAST,
+    # when up to four sibling runners have been hammering the same server for
+    # an hour — an unretried blip here paints a red X on a chain whose data
+    # loaded perfectly.
+    def _read(conn):
         stores = conn.execute(
             text("SELECT COUNT(*) FROM stores WHERE chain_id = :c"), {"c": cid}
         ).scalar()
@@ -82,6 +104,9 @@ def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
             ),
             {"c": cid},
         ).scalar()
+        return stores, prices, barcode_named
+
+    stores, prices, barcode_named = _with_db_retry(engine, _read)
 
     if barcode_named is not None and float(barcode_named) > MAX_BARCODE_NAME_SHARE:
         problems.append(
@@ -110,7 +135,8 @@ def check_chain(engine, slug: str, data_dir: Path) -> list[str]:
 def check_all(engine) -> list[str]:
     """Whole-database sanity, for a post-run summary."""
     problems: list[str] = []
-    with engine.connect() as conn:
+
+    def _read(conn):
         chains = conn.execute(text("SELECT COUNT(DISTINCT chain_id) FROM stores")).scalar()
         stores = conn.execute(text("SELECT COUNT(*) FROM stores")).scalar()
         prices = conn.execute(text("SELECT COUNT(*) FROM prices")).scalar()
@@ -119,6 +145,9 @@ def check_all(engine) -> list[str]:
                  "WHERE s.id IS NULL")
         ).scalar()
         negative = conn.execute(text("SELECT COUNT(*) FROM prices WHERE price <= 0")).scalar()
+        return chains, stores, prices, orphan, negative
+
+    chains, stores, prices, orphan, negative = _with_db_retry(engine, _read)
 
     print(f"  chains={chains}  stores={stores:,}  prices={prices:,}")
     if prices < MIN_PRICES_PER_CHAIN:

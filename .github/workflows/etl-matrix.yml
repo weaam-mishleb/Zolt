@@ -166,7 +166,11 @@ jobs:
     name: ${{ matrix.name }}
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Rami Levy carries 1.7M prices — 32% more than Shufersal, which only just
+    # fits. A job that runs past this is reported as CANCELLED, not failed,
+    # which reads exactly like fail-fast killing it. It is not: fail-fast is
+    # already false below, so no chain can ever cancel another.
+    timeout-minutes: 120
     strategy:
       fail-fast: false            # one bad chain must not cancel the rest
       max-parallel: 4             # cap concurrent writers so the DB pool holds
@@ -334,7 +338,11 @@ jobs:
 
       - run: |
           echo "### Nationwide ETL — ${{ needs.plan.outputs.count }} chains planned" >> $GITHUB_STEP_SUMMARY
-          echo "Loader result: **${{ needs.load.result }}**" >> $GITHUB_STEP_SUMMARY
+          # `needs.load.result` is the WORST result across the matrix, so one
+          # timed-out chain reports the whole nationwide load as cancelled even
+          # when 28 of 30 succeeded. Say what it actually means.
+          echo "Matrix aggregate result: **${{ needs.load.result }}** — this is the worst single chain, not the run." >> $GITHUB_STEP_SUMMARY
+          echo "Per-chain status is the job list above; what actually landed is below." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.load.result }}" = "failure" ]; then
             echo "::warning::One or more chains failed — the rest loaded successfully."
