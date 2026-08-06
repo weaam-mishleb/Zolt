@@ -1,0 +1,72 @@
+name: ETL — retry chains that failed
+
+# Re-runs the FAILED jobs of an ETL run, at most twice.
+#
+# WHY
+# A run once died with "The job was not acquired by Runner of type hosted even
+# after multiple attempts" — GitHub could not allocate a runner during a
+# capacity incident. The job never started, so nothing inside etl-matrix.yml
+# could have helped: `timeout-minutes` measures a job that is running, and
+# step-level retry actions need a step to run in.
+#
+# WHAT THIS DOES AND DOES NOT FIX
+# It covers the transient case: a few jobs miss out on runners while the rest
+# succeed. It does NOT rescue a full outage, because this workflow needs a
+# runner too — during a total incident it will sit queued exactly like the run
+# it is trying to rescue. That case really is "wait for GitHub".
+#
+# SAFE TO AUTO-RETRY
+# Only because the ETL is idempotent: every write is an upsert keyed on a unique
+# constraint, so re-running a chain that partly finished converges to the same
+# rows. A chain that failed for a real reason (bad data, a dead upstream file)
+# simply fails again and stays visible — two attempts do not hide it, and the
+# attempt count in the UI makes the retry obvious.
+
+on:
+  workflow_run:
+    workflows: ["ETL (matrix) → Cloud DB"]
+    types: [completed]
+
+# `actions: write` is what allows re-running a run. It is the only elevated
+# permission here, and it is scoped to this workflow alone.
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-failed:
+    name: Re-run failed chains
+    # run_attempt guards against a loop: `gh run rerun --failed` bumps the
+    # attempt on the SAME run, which fires workflow_run again on completion.
+    # Stopping at 3 means at most two automatic retries.
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for capacity to recover
+        # Retrying into a constrained pool usually fails the same way and burns
+        # an attempt for nothing. A few minutes is the cheapest way to let a
+        # transient incident pass.
+        run: sleep 180
+
+      - name: Re-run only the failed jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "Run $RUN_ID finished as failure on attempt $ATTEMPT — re-running its failed jobs."
+          echo "Chains that already succeeded are NOT re-run; the loader is per-chain isolated."
+          gh run rerun "$RUN_ID" --failed --repo "${{ github.repository }}"
+          echo "::notice::Re-ran the failed chains of run $RUN_ID (attempt $((ATTEMPT + 1)) of 3 max)."
+
+      - name: Say what to do if this keeps failing
+        if: failure()
+        run: |
+          echo "::warning::Could not re-run run $RUN_ID automatically."
+          echo "If GitHub is mid-incident, wait it out — nothing in a workflow can allocate a runner."
+          echo "When it recovers, load just the missing chains instead of everything:"
+          echo "  Actions → ETL (matrix) → Cloud DB → Run workflow → chains: stop_market"
