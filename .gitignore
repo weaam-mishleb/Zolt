@@ -42,3 +42,6 @@ db/data/
 
 # Defense-prep materials — local only, never pushed (Emil has repo read access)
 docs/defense/
+
+# scratch exports from scripts/export_unmapped_cities.py
+review*.csv
