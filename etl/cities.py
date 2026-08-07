@@ -292,39 +292,83 @@ CITY_ALIASES.update(REVIEWED_ALIASES)
 # "יקנעם" could be יקנעם עילית or יקנעם (מושבה) and "חצור" could be חצור
 # הגלילית or חצור-אשדוד. A wrong city is worse than none: it silently prices a
 # basket against the wrong branches and looks fine doing it.
-def _load_canonical_merges() -> dict[str, str]:
+# A merge entry is either a plain target string, or — when one spelling covers two
+# real places — a default plus address-keyed overrides:
+#
+#     "חצור": {"to": "חצור הגלילית", "when_address_contains": {"אשדוד": "חצור-אשדוד"}}
+#
+# The conditional form exists because collapsing חצור or יקנעם unconditionally
+# would do the very thing this module refuses to do elsewhere: file a branch
+# under a town it is not in. The address is already the independent evidence
+# `_corroborate` leans on; here it selects rather than vetoes.
+def _load_canonical_merges() -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     try:
         data = json.loads(_ALIASES_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}                     # never break an import over a data file
+        return {}, {}                 # never break an import over a data file
 
-    known = set(LOCALITY_CODE_TO_NAME.values()) | set(CITY_ALIASES.values())
-    out: dict[str, str] = {}
-    for source, target in (data.get("canonical_merges") or {}).items():
-        if not target or target not in known:
+    # Regional councils are not localities and will never be in the CBS list, so
+    # they are declared explicitly rather than smuggled in past the validator.
+    councils = {str(x).strip() for x in (data.get("regional_councils") or []) if x}
+    known = set(LOCALITY_CODE_TO_NAME.values()) | set(CITY_ALIASES.values()) | councils
+
+    def _check(source: str, target) -> str | None:
+        if not target or not isinstance(target, str) or target not in known:
             print(
                 f"  ! city_aliases.json: canonical_merges {source!r} -> {target!r} is not a "
                 f"known locality — ignoring it rather than inventing a city",
                 file=sys.stderr,
             )
-            continue
-        if source != target:
-            out[source] = target
-    return out
+            return None
+        return target
+
+    flat: dict[str, str] = {}
+    conditional: dict[str, dict[str, str]] = {}
+    for source, entry in (data.get("canonical_merges") or {}).items():
+        if isinstance(entry, dict):
+            target = _check(source, entry.get("to"))
+            if target is None:
+                continue
+            rules = {
+                needle: dest
+                for needle, raw in (entry.get("when_address_contains") or {}).items()
+                if (dest := _check(f"{source} [{needle}]", raw))
+            }
+            if rules:
+                conditional[source] = rules
+            entry = target
+        else:
+            entry = _check(source, entry)
+            if entry is None:
+                continue
+        if source != entry:
+            flat[source] = entry
+    return flat, conditional
 
 
-CANONICAL_MERGES = _load_canonical_merges()
+CANONICAL_MERGES, CONDITIONAL_MERGES = _load_canonical_merges()
 
 
-def canonical_city(name):
-    """Collapse a known duplicate spelling onto the string the filter matches on."""
+def canonical_city(name, address=None):
+    """Collapse a known duplicate spelling onto the string the filter matches on.
+
+    `address` only matters for the handful of names that cover two real places;
+    without one, the reviewed default is used.
+    """
     # Follows a chain (a -> b -> c) so the data file does not have to be kept
     # transitively flattened by hand, with a seen-set because one careless edit
     # making two names point at each other would otherwise hang the whole ETL.
     seen = set()
     while name in CANONICAL_MERGES and name not in seen:
         seen.add(name)
-        name = CANONICAL_MERGES[name]
+        override = None
+        if name in CONDITIONAL_MERGES:
+            haystack = _clean(address) or ""
+            override = next(
+                (dest for needle, dest in CONDITIONAL_MERGES[name].items() if needle in haystack),
+                None,
+            )
+        name = override or CANONICAL_MERGES[name]
     return name
 
 # The index was built from the gazetteer above, before these existed — fold them
@@ -525,7 +569,7 @@ def normalize_city(raw_city, store_name=None, address=None) -> str | None:
     spelling at least once, so the collapse belongs here — at the single exit —
     rather than inside any one of them.
     """
-    return canonical_city(_resolve_city(raw_city, store_name, address))
+    return canonical_city(_resolve_city(raw_city, store_name, address), address)
 
 
 def _resolve_city(raw_city, store_name=None, address=None) -> str | None:

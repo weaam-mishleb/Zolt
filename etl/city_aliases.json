@@ -19,8 +19,30 @@
   "קדימה צורן": "קדימה-צורן",
   "אום אל פחם": "אום אל-פחם",
   "דיר חנא": "דייר חנא",
-  "מודיעין": "מודיעין-מכבים-רעות"
+  "מודיעין": "מודיעין-מכבים-רעות",
+  "מיתרים": "מיתר",
+  "בקעת הירדן": "מועצה אזורית בקעת הירדן",
+  "מ.א. עמק חפר": "מועצה אזורית עמק חפר",
+  "יקנעם": {
+   "to": "יקנעם עילית",
+   "_why": "Nearly all the retail is in יקנעם עילית; the מושבה is small. Reviewed 2026-08-07.",
+   "when_address_contains": {
+    "מושבה": "יקנעם (מושבה)"
+   }
+  },
+  "חצור": {
+   "to": "חצור הגלילית",
+   "_why": "Two unrelated places share the name. The address decides: the one branch holding this value is on תל חי, a Galilee street name.",
+   "when_address_contains": {
+    "אשדוד": "חצור-אשדוד"
+   }
+  }
  },
+ "_regional_councils_note": "NOT CBS localities — a regional council is an administrative area, not a place. Listed here only so they are permitted as merge targets: the feed does ship branches whose only location is the council, and naming the council keeps the branch findable instead of dropping its city to NULL.",
+ "regional_councils": [
+  "מועצה אזורית בקעת הירדן",
+  "מועצה אזורית עמק חפר"
+ ],
  "aliases": {
   "יהוד": "יהוד-מונוסון",
   "אור ים": "אור עקיבא",

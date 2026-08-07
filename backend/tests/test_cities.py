@@ -52,9 +52,14 @@ def test_normalize_city(raw, store_name, expected):
         ("כפר-סבא", "כפר סבא"),
         ("כפרסבא", "כפר סבא"),
         ("כפר סבא צפון", "כפר סבא"),   # branch-area qualifier, not a city
-        ("יוקנעם", "יקנעם"),
-        ("יקנעם עילית", "יקנעם"),
-        ("יוקנעם עילית", "יקנעם"),
+        # All three land on the CBS locality now, not the bare "יקנעם". This
+        # REVERSES the earlier canonical: CITY_ALIASES still folds the variants
+        # onto "יקנעם", and a canonical_merge then carries that to "יקנעם עילית"
+        # — reviewed 2026-08-07, on the grounds that essentially all the retail
+        # is in עילית. A branch in the מושבה is routed there by its address.
+        ("יוקנעם", "יקנעם עילית"),
+        ("יקנעם עילית", "יקנעם עילית"),
+        ("יוקנעם עילית", "יקנעם עילית"),
         ("קריתגת", "קרית גת"),
     ],
 )
@@ -97,13 +102,41 @@ def test_canonical_merge_collapses_duplicate_spellings(raw, expected):
     assert normalize_city(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["חצור", "יקנעם", "מיתרים"])
-def test_ambiguous_names_are_never_merged(raw):
-    """A wrong city is worse than none — it prices a basket against the wrong
-    branches and looks fine doing it. חצור could be חצור הגלילית or חצור-אשדוד."""
+@pytest.mark.parametrize(
+    "raw, address, expected",
+    [
+        # One spelling, two real places — the address picks, it does not guess.
+        ("חצור", "תל חי 1", "חצור הגלילית"),
+        ("חצור", "קיבוץ חצור, אשדוד", "חצור-אשדוד"),
+        ("יקנעם", "התמר 1", "יקנעם עילית"),
+        ("יקנעם", "המושבה 3", "יקנעם (מושבה)"),
+        # No address at all falls back to the reviewed default rather than None.
+        ("חצור", None, "חצור הגלילית"),
+    ],
+)
+def test_address_selects_between_two_places_sharing_a_name(raw, address, expected):
+    assert normalize_city(raw, None, address) == expected
+
+
+def test_regional_councils_are_allowed_targets_but_are_not_localities():
+    """A council is an administrative area, not a place, so it will never be in
+    the CBS list. Naming it still beats dropping the branch's city to NULL."""
+    import json
+    import pathlib
+
     from etl.cities import CANONICAL_MERGES
 
-    assert raw not in CANONICAL_MERGES
+    raw = json.loads(
+        (pathlib.Path(__file__).parents[2] / "etl" / "city_aliases.json").read_text("utf-8")
+    )
+    councils = set(raw["regional_councils"])
+    gazetteer = set(
+        json.loads(
+            (pathlib.Path(__file__).parents[2] / "etl" / "localities.json").read_text("utf-8")
+        )["localities"].values()
+    )
+    assert councils and not (councils & gazetteer)
+    assert CANONICAL_MERGES["בקעת הירדן"] in councils
 
 
 def test_every_merge_target_is_a_known_locality():
