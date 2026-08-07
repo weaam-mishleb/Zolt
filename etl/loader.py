@@ -162,6 +162,26 @@ _PRICE_UPDATE_COLUMNS = (
 # than the merge saves.
 _UPSERTS = {"prices": _PRICE_UPSERT}
 
+# Recompute `products.availability` for exactly the products this chain just
+# staged, entirely server-side.
+#
+# The `WHERE p.availability <> t.n` is not an optimisation, it is the whole
+# point. Blind-updating every row would rewrite ~235k product rows per chain per
+# night, and rewriting a row that carries a FULLTEXT index is what generated the
+# 34.6M tombstones that made search take 20 seconds. Only genuine changes are
+# written, so a night where nothing moved writes nothing.
+_REFRESH_AVAILABILITY = """
+    UPDATE products p
+    JOIN (
+        SELECT pr.product_id AS pid, COUNT(DISTINCT pr.store_id) AS n
+        FROM prices pr
+        WHERE pr.product_id IN (SELECT DISTINCT product_id FROM {stage})
+        GROUP BY pr.product_id
+    ) t ON t.pid = p.id
+    SET p.availability = t.n
+    WHERE p.availability <> t.n
+"""
+
 
 class Loader:
     """DB writer with per-batch transactions, deterministic lock ordering and
@@ -369,7 +389,9 @@ class Loader:
             self._rows_since_beat += len(batch)
             self._beat(f"{what} (staging)")
 
-    def stage_commit(self, update_cols: tuple[str, ...], what: str) -> None:
+    def stage_commit(
+        self, update_cols: tuple[str, ...], what: str, post_merge: tuple[str, ...] = ()
+    ) -> None:
         """Merge the staged rows into the target, then drop the staging table.
 
         The merge is sliced on the staging primary key rather than run as one
@@ -404,6 +426,11 @@ class Loader:
                     self.rows_written[what] += done
                     self._rows_since_beat += done
                     self._beat(what)
+            # Anything that needs the staged rows must run BEFORE the drop.
+            for stmt in post_merge:
+                self._with_retry(
+                    lambda q=stmt: self._run(text(q.format(stage=stage))), f"{what} (post-merge)"
+                )
         finally:
             # Never leave one behind: it is invisible to the app and would
             # quietly consume the buffer pool this path exists to protect.

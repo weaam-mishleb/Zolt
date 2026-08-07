@@ -55,6 +55,10 @@ def test_real_schema_files_parse_into_executable_statements():
         assert stmts, f"{path.name} produced no statements"
         for s in stmts:
             head = s.lstrip().lower()
-            assert head.startswith(("create", "alter", "insert", "set", "drop")), (
+            assert head.startswith(# prepare/execute/deallocate: MySQL 8 has no ADD COLUMN IF NOT EXISTS,
+                # so 05_product_availability.sql builds the ALTER conditionally
+                # and runs it as a prepared statement.
+                ("create", "alter", "insert", "set", "drop",
+                 "prepare", "execute", "deallocate")), (
                 f"{path.name}: fragment does not start a statement → {s[:80]!r}"
             )

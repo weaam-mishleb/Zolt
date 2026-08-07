@@ -249,8 +249,13 @@ def load_prices(
         # End of the chain: one server-side merge, sliced into bounded
         # transactions. Nothing here crosses the WAN.
         if loader is not None:
-            from .loader import _PRICE_UPDATE_COLUMNS
-            loader.stage_commit(_PRICE_UPDATE_COLUMNS, "prices upsert")
+            from .loader import _PRICE_UPDATE_COLUMNS, _REFRESH_AVAILABILITY
+            # `availability` is denormalised onto products so search never has
+            # to COUNT(DISTINCT store_id) over 8.2M price rows per keystroke.
+            # Refreshed here, from the staging table, while it still exists.
+            loader.stage_commit(
+                _PRICE_UPDATE_COLUMNS, "prices upsert", post_merge=(_REFRESH_AVAILABILITY,)
+            )
 
         print(f"  · {slug:<10} rows={seen:<9} prices upserted={chain_prices}")
         bytes_before += path.stat().st_size

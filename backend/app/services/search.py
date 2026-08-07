@@ -28,6 +28,17 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     holds several rows with the same `name`. We `GROUP BY name` (picking the
     lowest id as the representative) so the autocomplete shows no duplicates.
 
+    `availability` is READ from products, not computed. It used to be
+    COUNT(DISTINCT pr.store_id) over 8.2M price rows, recomputed for every
+    matched product on every keystroke — that join was the entire remaining 1.5s
+    once the FULLTEXT tombstones were cleared. The value only changes when the
+    ETL runs, so etl.run maintains the column and search never touches `prices`.
+
+    Summed rather than maxed across a name group: the rows grouped under one name
+    are distinct barcodes, so their branch counts add. This can overcount only
+    when a single branch stocks two barcodes carrying the identical name, which
+    is rare and moves a ranking signal, not a price.
+
     Barcode path: an all-digit query is treated as a barcode prefix (uses the
     UNIQUE(barcode) index).
     Primary path: FULLTEXT boolean search with prefix wildcards (fast, ranked).
@@ -49,9 +60,8 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                    MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                    MIN(p.unit_of_measure) AS unit_of_measure,
                    MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-                   COUNT(DISTINCT pr.store_id) AS availability
+                   SUM(p.availability) AS availability
             FROM products p
-            LEFT JOIN prices pr ON pr.product_id = p.id
             WHERE p.barcode LIKE :prefix
             GROUP BY p.name
             ORDER BY availability DESC, CHAR_LENGTH(p.name) ASC
@@ -69,10 +79,9 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                    MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                    MIN(p.unit_of_measure) AS unit_of_measure,
                    MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-                   COUNT(DISTINCT pr.store_id) AS availability,
+                   SUM(p.availability) AS availability,
                    MAX(MATCH(p.name) AGAINST (:expr IN BOOLEAN MODE)) AS score
             FROM products p
-            LEFT JOIN prices pr ON pr.product_id = p.id
             WHERE MATCH(p.name) AGAINST (:expr IN BOOLEAN MODE)
             GROUP BY p.name
             ORDER BY (p.name LIKE :starts) DESC, availability DESC,
@@ -93,9 +102,8 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
                MIN(p.manufacturer) AS manufacturer, MIN(p.unit_qty) AS unit_qty,
                MIN(p.unit_of_measure) AS unit_of_measure,
                MIN(p.quantity) AS quantity, MAX(p.is_weighted) AS is_weighted,
-               COUNT(DISTINCT pr.store_id) AS availability
+               SUM(p.availability) AS availability
         FROM products p
-        LEFT JOIN prices pr ON pr.product_id = p.id
         WHERE p.name LIKE :contains OR p.manufacturer LIKE :contains
         GROUP BY p.name
         ORDER BY (p.name LIKE :prefix) DESC, availability DESC, CHAR_LENGTH(p.name) ASC
