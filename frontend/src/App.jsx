@@ -121,7 +121,7 @@ export default function App() {
               כמה עולה הסל שלכם?
             </h2>
             <p className="text-slate-500">
-              חפשו מוצרים, הוסיפו לסל, והשוו מחירים בין שופרסל, רמי לוי ואושר עד.
+              השוו מחירים בזמן אמת מכל רשתות השיווק בישראל ומצאו את הסל המשתלם ביותר.
             </p>
           </div>
 
@@ -168,24 +168,41 @@ export default function App() {
           )}
 
           {!comparison && !comparing && !compareError && (
-            <div className="mt-10 rounded-3xl border border-dashed border-slate-200 bg-white/60 p-12 text-center">
-              {basket.length === 0 ? (
-                <>
-                  <div className="text-5xl">🛒</div>
-                  <p className="mt-3 font-medium text-slate-500">
-                    התחילו בהקלדת שם מוצר בתיבת החיפוש
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="text-5xl">⚖️</div>
-                  <p className="mt-3 font-medium text-slate-500">
-                    {city
-                      ? 'לחצו "השוו מחירים" כדי לראות את הטבלה'
-                      : 'בחרו עיר בסל ולחצו "השוו מחירים"'}
-                  </p>
-                </>
-              )}
+            <div className="relative mt-10 overflow-hidden rounded-3xl border border-slate-200/60 bg-white/70 p-12 text-center shadow-lg shadow-slate-900/5 backdrop-blur-xl">
+              {/* A soft dot grid and a bloom behind the illustration. The dashed
+                  border read as "form field with nothing in it"; this reads as a
+                  deliberate resting state. */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-[0.55]"
+                style={{
+                  backgroundImage: 'radial-gradient(circle at 1px 1px, rgb(148 163 184 / 0.28) 1px, transparent 0)',
+                  backgroundSize: '22px 22px',
+                  maskImage: 'radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%)',
+                  WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%)',
+                }}
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute left-1/2 top-8 h-40 w-40 -translate-x-1/2 rounded-full bg-emerald-300/25 blur-3xl"
+              />
+              <div className="relative">
+                <EmptyStateArt stage={basket.length === 0 ? 'search' : city ? 'ready' : 'city'} />
+                <h3 className="mt-6 text-lg font-black tracking-tight text-slate-800">
+                  {basket.length === 0
+                    ? 'הסל שלכם ריק'
+                    : city
+                      ? 'הסל מוכן להשוואה'
+                      : 'כמעט שם'}
+                </h3>
+                <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-slate-500">
+                  {basket.length === 0
+                    ? 'התחילו בהקלדת שם מוצר בתיבת החיפוש, ואנחנו נמצא אותו בכל הרשתות.'
+                    : city
+                      ? 'לחצו "השוו מחירים" ונחשב את הסל בכל סניף בעיר שבחרתם.'
+                      : 'בחרו עיר בסל כדי שנדע אילו סניפים להשוות עבורכם.'}
+                </p>
+              </div>
             </div>
           )}
         </section>
@@ -208,6 +225,57 @@ export default function App() {
       <footer className="mx-auto w-full max-w-6xl px-4 py-6 text-center text-xs text-slate-400">
         Zolt · השוואת מחירים
       </footer>
+    </div>
+  )
+}
+
+/**
+ * EmptyStateArt — three states of the same scene, so the panel reads as
+ * progress rather than as three unrelated placeholders.
+ *
+ * Inline SVG rather than an emoji: an emoji renders differently on every
+ * platform and cannot be tinted to the brand. currentColor + the surrounding
+ * text colour keeps it consistent.
+ */
+function EmptyStateArt({ stage }) {
+  const tone =
+    stage === 'ready' ? 'text-emerald-500' : stage === 'city' ? 'text-amber-500' : 'text-slate-400'
+  return (
+    <div className="relative mx-auto grid h-24 w-24 place-items-center">
+      <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-white to-slate-50 shadow-sm ring-1 ring-slate-900/5" />
+      <svg
+        viewBox="0 0 48 48"
+        fill="none"
+        aria-hidden="true"
+        className={`relative h-12 w-12 transition-colors duration-500 ${tone}`}
+      >
+        {/* the basket, in every state */}
+        <path
+          d="M7 15h34l-3.4 19a4 4 0 0 1-3.94 3.3H14.34A4 4 0 0 1 10.4 34L7 15Z"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinejoin="round"
+        />
+        <path d="M17 15V11a7 7 0 0 1 14 0v4" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+        {stage === 'search' && (
+          <circle cx="24" cy="26" r="5" stroke="currentColor" strokeWidth="2.2" opacity=".45" />
+        )}
+        {stage === 'city' && (
+          <path
+            d="M24 21c-2.8 0-5 2.2-5 5 0 3.6 5 8 5 8s5-4.4 5-8c0-2.8-2.2-5-5-5Zm0 6.6a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2Z"
+            fill="currentColor"
+          />
+        )}
+        {stage === 'ready' && (
+          <path
+            d="m18 26.5 4.2 4.2L31 22"
+            stroke="currentColor"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+      </svg>
     </div>
   )
 }

@@ -1,5 +1,3 @@
-const CHAINS = ['שופרסל', 'רמי לוי', 'אושר עד']
-
 export default function Header() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/70 backdrop-blur-xl">
@@ -13,15 +11,17 @@ export default function Header() {
             <p className="text-xs text-slate-400">השוואת סלי קניות חכמה</p>
           </div>
         </a>
+        {/* The three chain pills are gone. They were hardcoded when the
+            database held exactly those three; naming any subset now understates
+            the coverage and goes stale the moment a chain is added. */}
         <nav className="hidden items-center gap-2 sm:flex">
-          {CHAINS.map((c) => (
-            <span
-              key={c}
-              className="rounded-full bg-slate-100/80 px-3 py-1 text-sm font-medium text-slate-500 ring-1 ring-slate-200/60"
-            >
-              {c}
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-600/10">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-600" />
             </span>
-          ))}
+            מחירים מכל הרשתות
+          </span>
         </nav>
       </div>
     </header>

@@ -18,7 +18,7 @@ export default function BasketSidebar({
 
   return (
     <aside className="lg:sticky lg:top-24 lg:self-start">
-      <div className="rounded-3xl border border-slate-200/70 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+      <div className="rounded-3xl border border-white/70 bg-white/80 p-6 shadow-lg shadow-slate-900/[0.06] ring-1 ring-slate-900/5 backdrop-blur-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800">
             <span>🛒</span> הסל שלי

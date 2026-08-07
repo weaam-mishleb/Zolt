@@ -71,7 +71,7 @@ export default function SearchBar({ onAdd }) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => (results.length || error) && setOpen(true)}
           placeholder="חפשו מוצר..."
-          className="w-full rounded-2xl border border-slate-200/80 bg-white py-4 pr-14 pl-24 text-lg shadow-sm outline-none ring-1 ring-slate-900/[0.03] transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+          className="w-full rounded-2xl border border-slate-200/70 bg-white py-4 pr-14 pl-24 text-lg shadow-lg shadow-slate-900/5 outline-none ring-1 ring-slate-900/[0.03] transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
         />
         {loading && (
           <span className="absolute inset-y-0 left-5 flex items-center text-sm text-slate-400">
