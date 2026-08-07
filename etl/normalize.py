@@ -26,6 +26,7 @@ no aliasing needed there.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -37,7 +38,21 @@ from .config import CHAIN_DISPLAY_NAMES
 # Missing it put the literal string "unknown" into `stores.city` for 19
 # branches, where it read as a real city name and blocked the store-name
 # fallback that would have recovered the actual one.
-_PLACEHOLDERS = {"", "לא ידוע", "unknown", "none", "null", "nan", "na", "n/a"}
+# "{}" is a serialised empty object that reached the feed instead of a value; it
+# was printed under a 📍 for 19 branches. It cannot be a legitimate price, code or
+# date either, so it is safe to reject everywhere.
+_PLACEHOLDERS = {
+    "", "לא ידוע", "unknown", "none", "null", "nan", "na", "n/a", "{}", "[]", "undefined",
+}
+
+# ── address-only scrubbing ──────────────────────────────────────────────────
+# Deliberately NOT folded into `clean_str`: that helper also feeds to_decimal,
+# norm_code, to_bool and parse_dt. Treating a bare "0" as absent there would turn
+# a price of zero into NULL and a store code of "0" into None. An address is free
+# text, and what is safe to reject in free text is not safe to reject in a number.
+_ADDRESS_NULLS = {"0", "0.0", "00", "-", "--", "—", ".", ",", "?"}
+# Hebrew, Arabic or Latin — the three scripts a street name here is written in.
+_HAS_LETTER = re.compile(r"[A-Za-z֐-׿؀-ۿ]")
 
 # Product fields carried from a price row into the products table.
 PRODUCT_FIELDS = (
@@ -56,6 +71,27 @@ def clean_str(v) -> str | None:
         return None
     s = str(v).strip().strip("'").strip('"').strip()
     if s.lower() in _PLACEHOLDERS:
+        return None
+    return s
+
+
+def clean_address(v) -> str | None:
+    """An address, or None when the feed sent a placeholder instead of a place.
+
+    Garbage here is not merely untidy: the UI prints the value under a 📍, so
+    "📍 {}" reads as something we believe. None lets the component skip the line
+    entirely, which is honest — we do not know where the branch is.
+    """
+    s = clean_str(v)
+    if s is None:
+        return None
+    if s.lower() in _ADDRESS_NULLS:
+        return None
+    # A street name cannot be punctuation or a bare number in any script.
+    if not _HAS_LETTER.search(s):
+        return None
+    # One character is not an address; "h" is in the feed twice.
+    if len(s) < 2:
         return None
     return s
 
@@ -167,7 +203,7 @@ def normalize_store(row: dict, chain_name_default: str) -> dict | None:
         "sub_chain_id": norm_code(row.get("subchainid")) or "",
         "store_code": store_code,
         "store_name": clean_str(row.get("storename")),
-        "address": clean_str(row.get("address")),
+        "address": clean_address(row.get("address")),
         # Unify across chains: Shufersal sends a (variant) name, Rami Levy / Osher
         # Ad send a numeric CBS code — fall back to the store name when needed.
         "city": normalize_city(row.get("city"), row.get("storename"), row.get("address")),

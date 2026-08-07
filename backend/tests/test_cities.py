@@ -196,3 +196,59 @@ def test_chain_without_an_override_keeps_the_feed_name():
         "city": "תל אביב",
     }
     assert normalize_store(row, "fallback")["chain_name"] == "שופרסל"
+
+
+# ── address scrubbing ───────────────────────────────────────────────────────
+# The UI prints the address under a 📍, so a placeholder does not read as missing
+# data — it reads as data we believe. "{}" was on 19 branches.
+@pytest.mark.parametrize(
+    "raw",
+    ["{}", "[]", "0", "0.0", "00", "-", "--", ".", ",", "?", "h", "   ", "", None,
+     "unknown", "לא ידוע", "null", "NaN", "undefined", "5614", "123"],
+)
+def test_placeholder_addresses_become_none(raw):
+    from etl.normalize import clean_address
+
+    assert clean_address(raw) is None
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("הארבעה 6", "הארבעה 6"),
+        ("  ויצמן 20  ", "ויצמן 20"),
+        ("כביש 4, בכניסה לפוריידיס 0", "כביש 4, בכניסה לפוריידיס 0"),
+        ("שד' ירושלים", "שד' ירושלים"),
+        ("Ben Gurion 1", "Ben Gurion 1"),
+        ("ألقدس 3", "ألقدس 3"),
+        ("ת.ד. 123", "ת.ד. 123"),
+    ],
+)
+def test_real_addresses_survive(raw, expected):
+    from etl.normalize import clean_address
+
+    assert clean_address(raw) == expected
+
+
+def test_address_rules_are_not_applied_to_numbers():
+    """clean_str also feeds to_decimal / norm_code / to_bool / parse_dt. A bare
+    "0" must stay a zero there — treating it as absent would turn a price of zero
+    into NULL and a store code of "0" into None."""
+    from decimal import Decimal
+
+    from etl.normalize import clean_str, norm_code, to_decimal
+
+    assert to_decimal("0") == Decimal("0")
+    assert norm_code("0") == "0"
+    assert clean_str("0") == "0"
+    # ...while the structural markers are rejected everywhere, numbers included.
+    assert clean_str("{}") is None
+    assert to_decimal("{}") is None
+
+
+def test_normalize_store_nulls_a_placeholder_address():
+    from etl.normalize import normalize_store
+
+    row = {"chainid": "7290027600007", "storeid": "9", "chainname": "שופרסל",
+           "storename": "רמת החייל", "address": "{}", "city": "תל אביב"}
+    assert normalize_store(row, "fallback")["address"] is None
