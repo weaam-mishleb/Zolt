@@ -32,7 +32,11 @@ from decimal import Decimal, InvalidOperation
 from .cities import normalize_city
 
 # Values that mean "no data" in the feed.
-_PLACEHOLDERS = {"", "לא ידוע", "none", "null", "nan", "na", "n/a"}
+# "unknown" is the feed's OTHER null marker, alongside the Hebrew "לא ידוע".
+# Missing it put the literal string "unknown" into `stores.city` for 19
+# branches, where it read as a real city name and blocked the store-name
+# fallback that would have recovered the actual one.
+_PLACEHOLDERS = {"", "לא ידוע", "unknown", "none", "null", "nan", "na", "n/a"}
 
 # Product fields carried from a price row into the products table.
 PRODUCT_FIELDS = (

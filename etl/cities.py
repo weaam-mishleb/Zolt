@@ -116,6 +116,13 @@ def _clean(value) -> str | None:
     s = str(value).strip().strip("'\"").strip()
     s = s.strip("-").strip()
     s = re.sub(r"\s+", " ", s)
+    # The feed's null markers, which arrive here as ordinary strings. Missing
+    # "unknown" put that literal word into `stores.city` for 19 branches, where
+    # it read as a real city name AND suppressed the store-name fallback that
+    # would have recovered the actual one — the city is usually right there
+    # ("BE טייבה", "יש חסד בית וגן", "וולט מרקט | חדרה").
+    if s.lower() in {"unknown", "לא ידוע", "none", "null", "n/a", "na"}:
+        return None
     return s or None
 
 
