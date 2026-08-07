@@ -132,7 +132,9 @@ class _CanonicalCache:
         return {b: cid for b in barcodes if (cid := self._cache.get(b)) is not None}
 
 
-def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter) -> None:
+def load_chain(
+    engine, slug: str, data_dir: Path, *, full: bool, stats: Counter, dry_run: bool = False
+) -> None:
     from .run import _read_csv_chunks           # shared streaming + forward-fill reader
 
     path = promo_file(data_dir, slug, full=full)
@@ -208,23 +210,34 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
 
         # 1. upsert headers (idempotent on (chain_id, store_id, promo_id_src))
         headers = [{k: v for k, v in p.items() if not k.startswith("_")} for p in promos]
-        writer.upsert_many(
-            _PROMO_UPSERT, headers, ("chain_id", "store_id", "promo_id_src"), "promotions upsert"
-        )
+        if not dry_run:
+            writer.upsert_many(
+                _PROMO_UPSERT, headers, ("chain_id", "store_id", "promo_id_src"),
+                "promotions upsert",
+            )
 
         # 2. read back surrogate ids
-        by_store: dict[tuple[str, int], list[str]] = {}
-        for p in promos:
-            by_store.setdefault((p["chain_id"], p["store_id"]), []).append(p["promo_id_src"])
-        id_of: dict[tuple[str, int, str], int] = {}
-        with engine.connect() as conn:
-            for (chain, sid), srcs in by_store.items():
-                for i in range(0, len(srcs), BATCH_SIZE):
-                    for pid, src in conn.execute(
-                        _SELECT_PROMO_IDS,
-                        {"chain": chain, "store": sid, "srcs": srcs[i : i + BATCH_SIZE]},
-                    ).all():
-                        id_of[(chain, sid, src)] = pid
+        #
+        # A dry run has none to read back — nothing was written — so the natural
+        # key stands in for the surrogate. It is only ever used as a dict key for
+        # de-duplicating links, so the counts below come out identical either way.
+        id_of: dict[tuple[str, int, str], object] = {}
+        if dry_run:
+            for p in promos:
+                key = (p["chain_id"], p["store_id"], p["promo_id_src"])
+                id_of[key] = key
+        else:
+            by_store: dict[tuple[str, int], list[str]] = {}
+            for p in promos:
+                by_store.setdefault((p["chain_id"], p["store_id"]), []).append(p["promo_id_src"])
+            with engine.connect() as conn:
+                for (chain, sid), srcs in by_store.items():
+                    for i in range(0, len(srcs), BATCH_SIZE):
+                        for pid, src in conn.execute(
+                            _SELECT_PROMO_IDS,
+                            {"chain": chain, "store": sid, "srcs": srcs[i : i + BATCH_SIZE]},
+                        ).all():
+                            id_of[(chain, sid, src)] = pid
 
         # 3. barcode → canonical_id, then link.
         #    The promo feed carries raw item codes, but products.barcode stores
@@ -263,10 +276,11 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
         # etl.canonical may be holding exclusively — a cycle no amount of
         # INSERT IGNORE avoids, because IGNORE suppresses the duplicate-key
         # ERROR, never the lock taken to detect it.
-        writer.upsert_many(
-            _ITEM_UPSERT, links, ("promotion_id", "canonical_id", "is_gift"),
-            "promotion_items upsert",
-        )
+        if not dry_run:
+            writer.upsert_many(
+                _ITEM_UPSERT, links, ("promotion_id", "canonical_id", "is_gift"),
+                "promotion_items upsert",
+            )
 
         stats["promotions"] += len(promos)
         stats["links"] += len(links)
@@ -276,15 +290,16 @@ def load_chain(engine, slug: str, data_dir: Path, *, full: bool, stats: Counter)
     print(f"    {slug:<12} promotions={chain_promos:<7} item links={chain_links:,}")
 
 
-def run(chains: list[str], data_dir: Path, *, full: bool) -> Counter:
+def run(chains: list[str], data_dir: Path, *, full: bool, dry_run: bool = False) -> Counter:
     from backend.app.db import engine
 
     t0 = time.time()
     stats: Counter = Counter()
     print(f"Zolt promotions — data_dir={data_dir}  chains={chains}  "
-          f"{'full' if full else 'snapshot'}", flush=True)
+          f"{'full' if full else 'snapshot'}"
+          f"{'  [DRY RUN — nothing is written]' if dry_run else ''}", flush=True)
     for slug in chains:
-        load_chain(engine, slug, data_dir, full=full, stats=stats)
+        load_chain(engine, slug, data_dir, full=full, stats=stats, dry_run=dry_run)
 
     print("─" * 56)
     print(f"  rows read          : {stats['rows_read']:,}")
@@ -302,8 +317,14 @@ def main() -> None:
     p.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
     p.add_argument("--chains", nargs="*", help="chain slugs (default: all configured)")
     p.add_argument("--full", action="store_true", help="use promo_full_file_*.csv")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="parse and resolve everything but write nothing — prints the same counters, "
+             "so a shortfall can be located without touching the promotions tables",
+    )
     args = p.parse_args()
-    run(args.chains or list(CHAINS), Path(args.data_dir), full=args.full)
+    run(args.chains or list(CHAINS), Path(args.data_dir), full=args.full, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
