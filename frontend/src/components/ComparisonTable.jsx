@@ -1,3 +1,4 @@
+import ProductImage from './ProductImage.jsx'
 import PromotionBadge from './promotions/PromotionBadge.jsx'
 
 const ils = new Intl.NumberFormat('he-IL', {
@@ -167,7 +168,14 @@ export default function ComparisonTable({ result }) {
           <tbody>
             {products.map((p) => (
               <tr key={p.id} className="group">
-                <td className={stickyBody}>{p.name || productCode(p.barcode)}</td>
+                <td className={stickyBody}>
+                  {/* Image + name share the sticky cell so the tile scrolls
+                      with the product it belongs to. */}
+                  <div className="flex items-center gap-3">
+                    <ProductImage barcode={p.barcode} name={p.name} size="sm" />
+                    <span className="min-w-0">{p.name || productCode(p.barcode)}</span>
+                  </div>
+                </td>
                 {stores.map((s) => {
                   const it = maps[s.store_id][p.id]
                   const isWinner = s.store_id === winner_store_id

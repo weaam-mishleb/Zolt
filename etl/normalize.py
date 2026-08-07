@@ -162,7 +162,7 @@ def normalize_store(row: dict, chain_name_default: str) -> dict | None:
         "address": clean_str(row.get("address")),
         # Unify across chains: Shufersal sends a (variant) name, Rami Levy / Osher
         # Ad send a numeric CBS code — fall back to the store name when needed.
-        "city": normalize_city(row.get("city"), row.get("storename")),
+        "city": normalize_city(row.get("city"), row.get("storename"), row.get("address")),
         "zip_code": clean_str(row.get("zipcode")),
     }
 

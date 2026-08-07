@@ -219,7 +219,51 @@ _CHAIN_PREFIXES = (
 )
 
 
-def locality_from_store_name(store_name) -> str | None:
+def _localities_in(value) -> set[str]:
+    """Every locality named by a whole segment of `value`."""
+    raw = _clean(value)
+    if not raw:
+        return set()
+    # "קרני שומרון (יוש)" must still read as קרני שומרון, or the address cannot
+    # contradict a wrong match.
+    raw = re.sub(r"\([^)]*\)", " ", raw)
+    out = set()
+    for seg in re.split(r"[-–—|,/*]+", raw):
+        hit = _LOCALITY_INDEX.get(_norm_locality(seg))
+        if hit:
+            out.add(hit)
+    return out
+
+
+# A locality name directly after one of these is naming a venue, not a town:
+# "קניון אורות", "חוצות אלונים", "מתחם עין חצבה".
+_VENUE_WORDS = ("קניון", "חוצות", "מתחם", "פנינת", "מרכז מסחרי", "מרכז", "סי סנטר", "פארק")
+
+
+def _inside_a_venue_name(locality: str, *fields) -> bool:
+    """True when `locality` appears immediately after a venue word."""
+    pattern = "|".join(re.escape(w) for w in _VENUE_WORDS)
+    for f in fields:
+        t = _norm_locality(_clean(f) or "")
+        if t and re.search(rf"(?:{pattern})\s+{re.escape(locality)}", t):
+            return True
+    return False
+
+
+def _looks_like_a_street(locality: str, address) -> bool:
+    """True when `locality` appears in the address as a STREET, not a town.
+
+    "אלונים 1, קרית טבעון" and "פארן 7 רמת אשכול" both name a real locality that
+    is, here, the road the branch stands on. A house number immediately after it
+    is the tell.
+    """
+    addr = _clean(address)
+    if not addr:
+        return False
+    return bool(re.search(rf"{re.escape(locality)}\s+\d", _norm_locality(addr)))
+
+
+def locality_from_store_name(store_name, address=None) -> str | None:
     """Recover a locality from a store name — or None. Never a guess.
 
     STRICT ON PURPOSE. The obvious implementation looks for any gazetteer entry
@@ -261,32 +305,78 @@ def locality_from_store_name(store_name) -> str | None:
     #    the name. "דלית אל כרמל" contains the token "כרמל", which is its own
     #    locality, so token matching would confidently return the wrong town.
     #    Segments keep multi-word names intact, so that trap cannot spring.
+    venue = "|".join(re.escape(w) for w in _VENUE_WORDS)
     for cand in candidates:
-        segments = [seg for seg in re.split(r"[-–—|,/*]+", cand) if seg.strip()]
+        segments = [
+            # A venue word glued to the front of a segment hides the locality:
+            # "מתחם עין - חצבה" is עין חצבה, not חצבה.
+            re.sub(rf"^(?:{venue})\s+", "", seg.strip())
+            for seg in re.split(r"[-–—|,/*]+", cand)
+            if seg.strip()
+        ]
         if len(segments) < 2:
             continue
-        hits = [
-            _LOCALITY_INDEX[key]
-            for seg in segments
-            if (key := _norm_locality(seg)) in _LOCALITY_INDEX
+
+        # Contiguous RUNS of segments, longest first. Separators split names
+        # that belong together ("מתחם עין - חצבה" → עין חצבה), so rejoining is
+        # what recovers them — and taking the longest match means the rejoined
+        # name wins over a fragment of itself.
+        #
+        # Runs are built only across SEPARATORS, never by splitting on spaces.
+        # That is the line that keeps "דלית אל כרמל" from resolving to כרמל.
+        runs = [
+            " ".join(segments[i:j])
+            for length in range(len(segments), 0, -1)
+            for i in range(len(segments) - length + 1)
+            for j in (i + length,)
         ]
-        # Exactly one segment may name a locality. Two would mean the name is
-        # ambiguous ("רמלה - לוד"), and picking either is a coin toss.
-        if len(hits) == 1:
-            return hits[0]
+        hits = [
+            _LOCALITY_INDEX[key] for run in runs if (key := _norm_locality(run)) in _LOCALITY_INDEX
+        ]
+        if not hits:
+            continue
+        # `runs` is ordered longest-first, so hits[0] is the most specific match.
+        # Reject only when two DIFFERENT localities match at the same length —
+        # "רמלה - לוד" is a genuine coin toss.
+        longest = [h for h in hits if len(h) == len(hits[0])]
+        if len(set(longest)) == 1:
+            return _corroborate(hits[0], store_name, address)
     return None
 
 
-def normalize_city(raw_city, store_name=None) -> str | None:
+def _corroborate(candidate: str, store_name, address) -> str | None:
+    """Keep the match only if the address does not contradict it.
+
+    The audit of 171 matches found ~7 wrong, all one shape: the matched segment
+    was a STREET, MALL or NEIGHBOURHOOD that happens to share a locality's name.
+    "BE אלונים- טבעון" resolved to the kibbutz Alonim while its address reads
+    "אלונים 1, קרית טבעון"; "יש מרים ירושלים- פארן" resolved to Paran, a moshav
+    in the Arava, from a Jerusalem street.
+
+    The address is independent evidence, so it gets a veto — it cannot promote a
+    match, only reject one. A store whose two sources disagree is exactly the
+    case where guessing is worse than NULL.
+    """
+    if _looks_like_a_street(candidate, address):
+        return None
+    if _inside_a_venue_name(candidate, store_name, address):
+        return None
+    in_address = _localities_in(address)
+    if in_address and candidate not in in_address:
+        return None                     # the two sources name different towns
+    return candidate
+
+
+def normalize_city(raw_city, store_name=None, address=None) -> str | None:
     """Return a canonical city name from the raw feed value (+ store name)."""
     cleaned = _clean(raw_city)
     if cleaned is None:
-        return _from_store_name(store_name) or locality_from_store_name(store_name)
+        return _from_store_name(store_name) or locality_from_store_name(store_name, address)
 
     if cleaned.isdigit():  # CBS locality code (Rami Levy / Osher Ad)
         code = str(int(cleaned))
         name = CITY_CODE_TO_NAME.get(code) or LOCALITY_CODE_TO_NAME.get(code)
-        return name or _from_store_name(store_name) or locality_from_store_name(store_name)
+        return name or _from_store_name(store_name) or locality_from_store_name(store_name, address)
 
     # Hebrew city name (Shufersal): map known variants, else keep cleaned name.
     return CITY_ALIASES.get(cleaned, cleaned)
