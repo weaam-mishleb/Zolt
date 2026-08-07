@@ -45,3 +45,31 @@ body {
   background: #cbd5e1;
   border-radius: 9999px;
 }
+
+/* ── Comparison matrix: native-feeling horizontal swipe ─────────────────────
+   Tailwind ships no scrollbar-hide utility and this project has no plugin, so
+   it lives here. */
+.scrollbar-hide {
+  scrollbar-width: none;              /* Firefox */
+  -ms-overflow-style: none;           /* old Edge */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* PROXIMITY, not mandatory.
+   `scroll-snap-type: x mandatory` fights a position:sticky column: the pinned
+   product cell occupies the snap viewport, so mandatory snapping can refuse to
+   settle on the first store and jerks the user back mid-swipe. Proximity gives
+   the same "lands on a card" feel and lets a scroll finish where the finger
+   left it. */
+.snap-stores {
+  scroll-snap-type: x proximity;
+  scroll-padding-inline-end: 11rem;   /* clear the pinned product column */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;     /* no accidental page-back on swipe */
+}
+.snap-store-col {
+  scroll-snap-align: end;             /* RTL: columns settle against the pin */
+  scroll-snap-stop: normal;
+}

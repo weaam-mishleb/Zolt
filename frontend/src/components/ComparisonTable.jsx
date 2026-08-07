@@ -23,25 +23,25 @@ function itemsByProduct(store) {
 
 // ── Sleek data-table cells: only subtle horizontal separators; the winner
 //    column is tinted green for grouping (no heavy grid lines). ──
+// The store header is sticky VERTICALLY only, so `backdrop-blur` is safe here —
+// it is the horizontally-pinned product column that Safari drops when a cell
+// gets its own compositing layer. Keep the two apart.
 function thClass(isWinner, incomplete) {
-  const base = 'sticky top-0 z-10 min-w-[160px] px-5 py-4 align-top border-b border-slate-200/80'
-  if (isWinner) return `${base} bg-emerald-50`
-  if (incomplete) return `${base} bg-amber-50/60`
-  return `${base} bg-white/95 backdrop-blur`
+  const base =
+    'snap-store-col sticky top-0 z-20 min-w-[176px] px-5 py-4 align-top ' +
+    'border-b border-slate-200/70 transition-colors duration-200'
+  if (isWinner) return `${base} bg-emerald-50/95 backdrop-blur-md`
+  if (incomplete) return `${base} bg-amber-50/80 backdrop-blur-md`
+  return `${base} bg-white/85 backdrop-blur-md`
 }
 
 function tdClass(isWinner) {
-  const base = 'px-5 py-3.5 text-center tabular-nums border-b border-slate-100 transition-colors'
+  const base =
+    'snap-store-col px-5 py-4 text-center tabular-nums border-b border-slate-100/80 ' +
+    'transition-all duration-200'
   return isWinner
-    ? `${base} bg-emerald-50/70 font-semibold text-emerald-800 group-hover:bg-emerald-100/70`
-    : `${base} bg-white text-slate-600 group-hover:bg-slate-50/70`
-}
-
-function tfClass(isWinner, incomplete) {
-  const base = 'px-5 py-4 text-center text-base font-black tabular-nums border-t border-slate-200/80'
-  if (isWinner) return `${base} bg-emerald-100/70 text-emerald-800`
-  if (incomplete) return `${base} bg-amber-50/60 text-amber-800`
-  return `${base} bg-white text-slate-800`
+    ? `${base} bg-emerald-50/60 font-bold text-emerald-800 group-hover:bg-emerald-100/60`
+    : `${base} bg-white font-semibold text-slate-700 group-hover:bg-slate-50/80`
 }
 
 // Pinned-right product column.
@@ -51,9 +51,11 @@ function tfClass(isWinner, incomplete) {
 // The GPU layer is promoted once on the SCROLL CONTAINER instead (see below), so
 // the whole scroll area repaints as one stable layer.
 const STICKY = 'sticky right-0 border-l border-slate-200/80'
-const stickyHead = `${STICKY} top-0 z-30 bg-white px-5 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-200/80`
-const stickyBody = `${STICKY} z-20 bg-white px-5 py-3.5 text-right font-medium text-slate-700 border-b border-slate-100 group-hover:bg-slate-50/70`
-const stickyFoot = `${STICKY} z-20 bg-white px-5 py-4 text-right font-bold text-slate-800 border-t border-slate-200/80`
+// SOLID backgrounds, deliberately. No backdrop-blur and no transform on these:
+// a compositing layer on a horizontally-pinned cell is exactly what made Safari
+// drop this column mid-scroll.
+const stickyHead = `${STICKY} top-0 z-40 bg-white px-5 py-4 text-right text-[11px] font-semibold uppercase tracking-widest text-slate-400 border-b border-slate-200/70`
+const stickyBody = `${STICKY} z-30 bg-white px-4 py-3 text-right border-b border-slate-100/80 transition-colors duration-200 group-hover:bg-slate-50/80`
 
 export default function ComparisonTable({ result }) {
   const { products, stores, winner_store_id, complete_store_count, store_count, shown_store_count } =
@@ -128,7 +130,7 @@ export default function ComparisonTable({ result }) {
         // pinned column repaints with it (instead of per-cell layers that Safari
         // dropped mid-scroll).
         style={{ transform: 'translateZ(0)' }}
-        className="w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5"
+        className="snap-stores scrollbar-hide w-full overflow-x-auto rounded-3xl border border-slate-200/70 bg-white shadow-sm ring-1 ring-slate-900/5"
       >
         <table className="w-full min-w-max border-separate border-spacing-0 text-sm">
           <thead>
@@ -158,6 +160,22 @@ export default function ComparisonTable({ result }) {
                           +{s.pct_above_cheapest}% מהזול
                         </span>
                       )}
+                      {/* The running total lives HERE rather than in a footer:
+                          on a phone the footer is far below the fold, and the
+                          number the shopper is actually comparing has to stay
+                          on screen while the products scroll past it. */}
+                      <span
+                        className={`mt-1 text-lg font-black tabular-nums tracking-tight ${
+                          isWinner ? 'text-emerald-700' : 'text-slate-800'
+                        }`}
+                      >
+                        {ils.format(s.total)}
+                      </span>
+                      {s.total_savings > 0 && (
+                        <span className="text-[11px] font-semibold text-violet-600">
+                          חסכת {ils.format(s.total_savings)}
+                        </span>
+                      )}
                     </div>
                   </th>
                 )
@@ -172,8 +190,24 @@ export default function ComparisonTable({ result }) {
                   {/* Image + name share the sticky cell so the tile scrolls
                       with the product it belongs to. */}
                   <div className="flex items-center gap-3">
-                    <ProductImage barcode={p.barcode} name={p.name} size="sm" />
-                    <span className="min-w-0">{p.name || productCode(p.barcode)}</span>
+                    <ProductImage
+                      barcode={p.barcode}
+                      name={p.name}
+                      size="md"
+                      className="shadow-sm ring-1 ring-slate-900/5"
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-semibold leading-snug text-slate-800">
+                        {p.name || productCode(p.barcode)}
+                      </span>
+                      {/* Secondary line in a lighter weight — brand and size are
+                          context, not the thing being compared. */}
+                      {(p.manufacturer || p.unit_of_measure) && (
+                        <span className="truncate text-xs font-normal text-slate-400">
+                          {[p.manufacturer, p.unit_of_measure].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </td>
                 {stores.map((s) => {
@@ -218,25 +252,6 @@ export default function ComparisonTable({ result }) {
             ))}
           </tbody>
 
-          <tfoot>
-            <tr>
-              <td className={stickyFoot}>סה״כ</td>
-              {stores.map((s) => {
-                const isWinner = s.store_id === winner_store_id
-                return (
-                  <td key={s.store_id} className={tfClass(isWinner, !s.is_complete)}>
-                    {ils.format(s.total)}
-                    {s.total_savings > 0 && (
-                      <span className="block text-[11px] font-semibold text-violet-600">
-                        חסכת {ils.format(s.total_savings)}
-                      </span>
-                    )}
-                    {!s.is_complete && <span className="block text-[11px] font-medium">חלקי</span>}
-                  </td>
-                )
-              })}
-            </tr>
-          </tfoot>
         </table>
       </div>
 
