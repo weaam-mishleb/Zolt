@@ -13,6 +13,8 @@ basket comparison (which matches stores by exact city) sees every chain together
 """
 from __future__ import annotations
 
+import json
+import pathlib
 import re
 
 # ── CBS locality codes (סמל יישוב) → canonical name ──────────────────────────
@@ -165,15 +167,102 @@ def _from_store_name(store_name) -> str | None:
     return None
 
 
+
+
+# ── the full CBS gazetteer ───────────────────────────────────────────────────
+#
+# The hand-built map above covers the 55 cities that happened to appear in three
+# chains' files. That is ~5% of Israel's localities, and it is why 540 of 1,860
+# stores had no city: "BE דלית אל כרמל" and "אקספרס כפר נטר" carry the locality
+# in the store NAME, but there was nothing to recognise it against.
+#
+# etl/localities.json is the Central Bureau of Statistics list from data.gov.il
+# (1,310 localities, with their סמל יישוב codes). Regenerate with
+# `python -m scripts.fetch_localities`.
+_LOCALITIES_FILE = pathlib.Path(__file__).with_name("localities.json")
+
+
+def _load_localities() -> dict[str, str]:
+    try:
+        data = json.loads(_LOCALITIES_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}                       # never break an import over a data file
+    return data.get("localities", {})
+
+
+LOCALITY_CODE_TO_NAME: dict[str, str] = _load_localities()
+# normalized name -> canonical name
+_LOCALITY_INDEX: dict[str, str] = {}
+
+
+def _norm_locality(value: str) -> str:
+    """Fold the spelling differences between the feed and the CBS list.
+
+    Quotes, hyphens and doubled spaces vary freely across chains
+    ("דאלית אל-כרמל" vs "דלית אל כרמל"), and none of them carry meaning.
+    """
+    s = re.sub(r"[\"\'`\-–—]", " ", str(value or ""))
+    return re.sub(r"\s+", " ", s).strip()
+
+
+for _code, _name in LOCALITY_CODE_TO_NAME.items():
+    _LOCALITY_INDEX.setdefault(_norm_locality(_name), _name)
+for _variant, _canon in CITY_ALIASES.items():
+    _LOCALITY_INDEX.setdefault(_norm_locality(_variant), _canon)
+
+# Chain branding that sits in front of the locality in a store name.
+_CHAIN_PREFIXES = (
+    "אקספרס", "יש חסד", "יש בשכונה", "יש בשכונה", "שופרסל דיל", "שופרסל שלי",
+    "שופרסל אונליין", "שופרסל", "נטו חיסכון", "וולט מרקט", "סיטי מרקט",
+    "דור אלון", "סופר יודה", "טיב טעם", "יוחננוף", "קרפור", "דיל", "שלי",
+    "BE", "Be", "be",
+)
+
+
+def locality_from_store_name(store_name) -> str | None:
+    """Recover a locality from a store name — or None. Never a guess.
+
+    STRICT ON PURPOSE. The obvious implementation looks for any gazetteer entry
+    inside the name and takes the longest, and that silently invents cities:
+    "אקספרס גבעת עדה" resolves to גבע and "BE דלית אל כרמל" to כרמל, because
+    both fragments ARE real localities. A wrong city is worse than no city —
+    it filters the user's basket to branches in the wrong town and looks
+    perfectly fine while doing it.
+
+    So a match must consume the WHOLE name once the chain branding is removed.
+    That trades recall for precision, which is the right way round here: an
+    unmatched store shows no city, and the comparison simply does not offer it
+    under a town it is not in.
+    """
+    raw = _clean(store_name)
+    if not raw:
+        return None
+
+    candidates = [raw]
+    stripped = re.sub(r"^(אונליין|online)\s*[-|]\s*", "", raw, flags=re.IGNORECASE)
+    for prefix in sorted(_CHAIN_PREFIXES, key=len, reverse=True):
+        if stripped.startswith(prefix):
+            candidates.append(stripped[len(prefix):].strip(" -|,.*"))
+            break
+    candidates.append(stripped)
+
+    for cand in candidates:
+        hit = _LOCALITY_INDEX.get(_norm_locality(cand))
+        if hit:
+            return hit
+    return None
+
+
 def normalize_city(raw_city, store_name=None) -> str | None:
     """Return a canonical city name from the raw feed value (+ store name)."""
     cleaned = _clean(raw_city)
     if cleaned is None:
-        return _from_store_name(store_name)
+        return _from_store_name(store_name) or locality_from_store_name(store_name)
 
     if cleaned.isdigit():  # CBS locality code (Rami Levy / Osher Ad)
-        name = CITY_CODE_TO_NAME.get(str(int(cleaned)))
-        return name or _from_store_name(store_name)
+        code = str(int(cleaned))
+        name = CITY_CODE_TO_NAME.get(code) or LOCALITY_CODE_TO_NAME.get(code)
+        return name or _from_store_name(store_name) or locality_from_store_name(store_name)
 
     # Hebrew city name (Shufersal): map known variants, else keep cleaned name.
     return CITY_ALIASES.get(cleaned, cleaned)
