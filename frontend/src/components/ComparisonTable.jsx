@@ -21,16 +21,59 @@ function itemsByProduct(store) {
   return map
 }
 
+// Basket quantity is NOT on `products` — that array is a `ProductBrief`
+// (id/name/barcode only, see schemas.py). It lives on the store items, where the
+// backend writes one entry per requested product for EVERY store, found or not
+// (comparison.py builds `items_out` by iterating `pids`). So any store is a
+// complete source and they all agree; scanning them just tolerates a short list.
+function qtyByProduct(stores) {
+  const map = {}
+  for (const s of stores) {
+    for (const it of s.items) {
+      if (map[it.product_id] == null && it.quantity != null) map[it.product_id] = it.quantity
+    }
+  }
+  return map
+}
+
+// Weighted items (meat, produce) are legitimately fractional — 0.5 kg must not
+// render as "×0.5000" or get rounded away to "×1".
+const qtyLabel = (q) => `×${Number.isInteger(q) ? q : Number(q.toFixed(2))}`
+
+// ── Column widths live here, once. ──
+// Header and body cells MUST carry the same width AND the same horizontal
+// padding, or the sticky header drifts out of line with the column scrolling
+// under it. Bundling both in one constant is what stops them drifting apart.
+const STORE_COL = 'w-[150px] min-w-[150px] px-3'
+// 11rem, and it must STAY equal to `scroll-padding-inline-end` in index.css —
+// that padding exists solely to clear this pinned column, so a mismatch lands
+// every snap slightly off.
+// Pinning the width is what actually fixed the "squished, cut-off" store cards:
+// the store columns already carried min-w-[150px], but this column had no width
+// at all, and auto table layout handed it whatever the longest product name
+// asked for — pushing the store cards off-screen.
+// All three of w/min-w/max-w are needed, and `max-w` is the one that carries
+// mobile: measured at a 375px viewport, dropping it let this column take 371px
+// of the 375 and squeeze the store cards out entirely. On desktop the table's
+// own `w-full` outranks max-width and the column stretches (~284px) — that is
+// fine and wanted, because there is no horizontal scroll there for the snap
+// padding to disagree with.
+const PRODUCT_COL = 'w-[11rem] min-w-[11rem] max-w-[11rem] px-3'
+
 // ── Sleek data-table cells: only subtle horizontal separators; the winner
 //    column is tinted green for grouping (no heavy grid lines). ──
 // The store header is sticky VERTICALLY only, so `backdrop-blur` is safe here —
 // it is the horizontally-pinned product column that Safari drops when a cell
 // gets its own compositing layer. Keep the two apart.
 function thClass(isWinner, incomplete) {
-  // px-3 here and px-3 on the body cells — identical horizontal padding is what
-  // keeps a sticky header visually aligned with the column scrolling under it.
+  // `h-px` is load-bearing, not a typo. A table cell always stretches to the row
+  // height, but a CHILD's `h-full` only resolves against a *definite* height —
+  // with none, the child collapses to its own content and `mt-auto` has no slack
+  // to push into, so every total sits at a different level. `h-px` supplies that
+  // definite height (the cell still stretches to the row), which is what puts all
+  // the prices on one baseline. Safari in particular needs it.
   const base =
-    'snap-store-col sticky top-0 z-20 w-[150px] min-w-[150px] px-3 py-2.5 align-top ' +
+    `snap-store-col sticky top-0 z-20 h-px ${STORE_COL} py-2.5 align-top ` +
     'border-b border-l border-gray-100 transition-colors duration-200'
   if (isWinner) return `${base} bg-emerald-50/90 backdrop-blur-md`
   if (incomplete) return `${base} bg-amber-50/70 backdrop-blur-md`
@@ -38,10 +81,10 @@ function thClass(isWinner, incomplete) {
 }
 
 function tdClass(isWinner) {
-  // Matches the header's px-3 exactly. py-2 keeps rows tight so more products
-  // fit on a phone screen.
+  // Same STORE_COL as the header, so width and px-3 can never diverge. py-2
+  // keeps rows tight so more products fit on a phone screen.
   const base =
-    'snap-store-col w-[150px] min-w-[150px] px-3 py-2 text-center tabular-nums ' +
+    `snap-store-col ${STORE_COL} py-2 text-center tabular-nums ` +
     'border-b border-l border-gray-100 transition-all duration-200'
   return isWinner
     ? `${base} bg-emerald-50/50 font-bold text-emerald-800 group-hover:bg-emerald-100/60`
@@ -54,14 +97,23 @@ function tdClass(isWinner) {
 // makes Safari drop it during scroll (the pinned column vanished and reappeared).
 // The GPU layer is promoted once on the SCROLL CONTAINER instead (see below), so
 // the whole scroll area repaints as one stable layer.
-const STICKY = 'sticky right-0 border-l border-slate-200/80'
-// SOLID backgrounds, deliberately. No backdrop-blur and no transform on these:
-// a compositing layer on a horizontally-pinned cell is exactly what made Safari
+// The left edge gets a hairline border AND a soft shadow so the column reads as
+// floating above the cards that scroll under it. A box-shadow is safe here where
+// a blur is not: `box-shadow` paints into the existing layer, it does not promote
+// a compositing layer the way backdrop-filter/transform/will-change do. That
+// distinction is the whole reason this column survives a Safari scroll.
+const STICKY =
+  'sticky right-0 border-l border-slate-200 shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.14)]'
+// SOLID backgrounds, deliberately — and every hover state below is solid too.
+// A translucent background on a pinned cell lets the scrolling store cards show
+// straight through it. No backdrop-blur and no transform on these either: a
+// compositing layer on a horizontally-pinned cell is exactly what made Safari
 // drop this column mid-scroll.
-const stickyHead = `${STICKY} top-0 z-40 bg-white px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-widest text-slate-400 border-b border-gray-100`
+const stickyHead = `${STICKY} ${PRODUCT_COL} top-0 z-40 bg-slate-50 py-2.5 text-right text-[11px] font-semibold uppercase tracking-widest text-slate-400 border-b border-gray-100`
 // No per-row bottom border: the product column should read as ONE list, not a
-// stack of disconnected cells. Separation comes from the row spacing itself.
-const stickyBody = `${STICKY} z-30 bg-white px-3 py-2 text-right transition-colors duration-200 group-hover:bg-slate-50/70`
+// stack of disconnected cells. Separation comes from the row spacing itself —
+// which is also why the tint runs unbroken from the header down.
+const stickyBody = `${STICKY} ${PRODUCT_COL} z-30 bg-slate-50 py-2 text-right transition-colors duration-200 group-hover:bg-slate-100`
 
 export default function ComparisonTable({ result }) {
   const { products, stores, winner_store_id, complete_store_count, store_count, shown_store_count } =
@@ -80,6 +132,7 @@ export default function ComparisonTable({ result }) {
   const incompleteStores = stores.filter((s) => !s.is_complete)
   const productName = (id) => products.find((p) => p.id === id)?.name || `#${id}`
   const shown = shown_store_count || stores.length
+  const qtyOf = qtyByProduct(stores)
 
   return (
     <div className="animate-in mt-8 space-y-5">
@@ -140,7 +193,10 @@ export default function ComparisonTable({ result }) {
                 const isWinner = s.store_id === winner_store_id
                 return (
                   <th key={s.store_id} className={thClass(isWinner, !s.is_complete)}>
-                    <div className="flex flex-col items-center gap-1">
+                    {/* h-full resolves against the th's h-px (which the row then
+                        stretches), giving `mt-auto` on the total real slack to
+                        push into. */}
+                    <div className="flex h-full flex-col items-center gap-1">
                       {isWinner && (
                         <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
                           🏆 הזול ביותר
@@ -163,19 +219,26 @@ export default function ComparisonTable({ result }) {
                       {/* The running total lives HERE rather than in a footer:
                           on a phone the footer is far below the fold, and the
                           number the shopper is actually comparing has to stay
-                          on screen while the products scroll past it. */}
+                          on screen while the products scroll past it.
+
+                          `mt-auto` drops it to the bottom of the cell, so a store
+                          whose address wrapped to two lines still shows its total
+                          on the same horizontal line as every other store. */}
                       <span
-                        className={`mt-1 text-lg font-black tabular-nums tracking-tight ${
+                        className={`mt-auto pt-1.5 text-lg font-black tabular-nums tracking-tight ${
                           isWinner ? 'text-emerald-700' : 'text-slate-800'
                         }`}
                       >
                         {ils.format(s.total)}
                       </span>
-                      {s.total_savings > 0 && (
-                        <span className="text-[11px] font-semibold text-violet-600">
-                          חסכת {ils.format(s.total_savings)}
-                        </span>
-                      )}
+                      {/* Rendered even at zero savings, as a fixed-height empty
+                          slot. Bottom-aligning the total ALONE is not enough: a
+                          column carrying a savings line underneath would push its
+                          price up by exactly that line's height. Reserving the row
+                          in every column is what makes the prices truly level. */}
+                      <span className="h-[15px] whitespace-nowrap text-[11px] font-semibold leading-[15px] text-violet-600">
+                        {s.total_savings > 0 ? `חסכת ${ils.format(s.total_savings)}` : ''}
+                      </span>
                     </div>
                   </th>
                 )
@@ -196,15 +259,25 @@ export default function ComparisonTable({ result }) {
                       size="sm"
                       className="shadow-sm ring-1 ring-gray-100"
                     />
-                    <span className="flex min-w-0 flex-col">
+                    <span className="flex min-w-0 flex-col gap-1">
                       <span className="truncate text-[13px] font-semibold leading-tight text-slate-800">
                         {p.name || productCode(p.barcode)}
                       </span>
-                      {/* Secondary line in a lighter weight — brand and size are
-                          context, not the thing being compared. */}
-                      {(p.manufacturer || p.unit_of_measure) && (
-                        <span className="truncate text-[11px] font-normal leading-tight text-slate-400">
-                          {[p.manufacturer, p.unit_of_measure].filter(Boolean).join(' · ')}
+                      {/* The quantity sits on the SECOND line, not beside the
+                          name. Measured: inline, the badge took ~48px of the
+                          ~112px of text width this column has, which truncated
+                          even a 15-character name. On its own line the name gets
+                          the full width back and the badge still lands on the
+                          right, under the start of the name.
+                          `self-start` keeps it hugging its content — a flex-col
+                          would otherwise stretch it across the whole cell. If a
+                          sibling ever joins it here, space them with `gap`, never
+                          `ml-*`/`mr-*`: a physical margin opens on the wrong side
+                          once the flow is RTL. */}
+                      {qtyOf[p.id] != null && (
+                        <span className="inline-flex shrink-0 items-center justify-center self-start rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold leading-tight tabular-nums text-blue-700">
+                          <span className="sr-only">כמות </span>
+                          {qtyLabel(qtyOf[p.id])}
                         </span>
                       )}
                     </span>
