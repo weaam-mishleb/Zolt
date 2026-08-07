@@ -138,6 +138,29 @@ class _CanonicalCache:
         return {b: cid for b in barcodes if (cid := self._cache.get(b)) is not None}
 
 
+def _resolve_promo_path(data_dir: Path, slug: str, *, full: bool) -> tuple[Path | None, bool]:
+    """Return ``(path, fell_back)`` for one chain's promotion input.
+
+    ``--full`` is a preference, not permission to load nothing.  Kaggle does
+    not publish a PromoFull CSV for every chain on every release; when it is
+    absent, the standard incremental file is still useful and is strictly
+    better than a green ETL job that silently loaded zero promotions.
+
+    The fallback is intentionally one-way.  A normal snapshot run must never
+    surprise the operator by selecting a multi-gigabyte full catalogue.
+    """
+    requested = promo_file(data_dir, slug, full=full)
+    if requested.exists():
+        return requested, False
+
+    if full:
+        fallback = promo_file(data_dir, slug, full=False)
+        if fallback.exists():
+            return fallback, True
+
+    return None, False
+
+
 def load_chain(
     engine,
     slug: str,
@@ -150,10 +173,23 @@ def load_chain(
 ) -> None:
     from .run import _read_csv_chunks           # shared streaming + forward-fill reader
 
-    path = promo_file(data_dir, slug, full=full)
-    if not path.exists():
-        print(f"  ! missing promo file: {path.name} — skipping {slug}", file=sys.stderr)
+    requested = promo_file(data_dir, slug, full=full)
+    path, fell_back = _resolve_promo_path(data_dir, slug, full=full)
+    if path is None:
+        fallback = promo_file(data_dir, slug, full=False)
+        suffix = f"; fallback also missing: {fallback.name}" if full else ""
+        print(
+            f"  ! missing promo file: {requested.name}{suffix} — skipping {slug}",
+            file=sys.stderr,
+        )
         return
+    if fell_back:
+        stats["full_fallbacks"] += 1
+        print(
+            f"  ! {slug}: {requested.name} is missing — falling back to {path.name}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     with engine.connect() as conn:
         store_map = {
@@ -346,6 +382,7 @@ def run(
     print(f"  rows read          : {stats['rows_read']:,}")
     print(f"  rows skipped       : {stats['rows_bad']:,} (unusable)")
     print(f"  promo w/o store    : {stats['no_store']:,}")
+    print(f"  full→snapshot fallbacks: {stats['full_fallbacks']:,}")
     print(f"  promotions upserted: {stats['promotions']:,}")
     print(f"  item links         : {stats['links']:,}")
     print(f"  items unresolved   : {stats['items_unresolved']:,} (barcode not in product_map)")

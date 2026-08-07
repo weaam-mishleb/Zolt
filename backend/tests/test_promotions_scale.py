@@ -22,6 +22,42 @@ def test_nightly_workflow_loads_the_full_promotion_catalogue():
     assert 'python -m etl.promotions --chains "$CHAIN" --full' in workflow
 
 
+def test_full_promo_file_wins_when_both_inputs_exist(tmp_path):
+    from etl.promotions import _resolve_promo_path
+
+    full = tmp_path / "promo_full_file_rami_levy.csv"
+    snapshot = tmp_path / "promo_file_rami_levy.csv"
+    full.touch()
+    snapshot.touch()
+
+    assert _resolve_promo_path(tmp_path, "rami_levy", full=True) == (full, False)
+
+
+def test_missing_full_file_falls_back_to_incremental_snapshot(tmp_path):
+    from etl.promotions import _resolve_promo_path
+
+    snapshot = tmp_path / "promo_file_rami_levy.csv"
+    snapshot.touch()
+
+    assert _resolve_promo_path(tmp_path, "rami_levy", full=True) == (snapshot, True)
+
+
+def test_missing_both_files_returns_none(tmp_path):
+    from etl.promotions import _resolve_promo_path
+
+    assert _resolve_promo_path(tmp_path, "rami_levy", full=True) == (None, False)
+
+
+def test_snapshot_run_never_escalates_to_full_file(tmp_path):
+    """The fallback is intentionally one-way: an ordinary run must not select
+    a multi-gigabyte input just because the small snapshot is absent."""
+    from etl.promotions import _resolve_promo_path
+
+    (tmp_path / "promo_full_file_rami_levy.csv").touch()
+
+    assert _resolve_promo_path(tmp_path, "rami_levy", full=False) == (None, False)
+
+
 def test_promotion_index_migration_is_idempotent_and_non_redundant():
     sql = (ROOT / "db" / "init" / "06_promotion_read_indexes.sql").read_text("utf-8")
     statements = _statements(sql)
