@@ -27,21 +27,25 @@ function itemsByProduct(store) {
 // it is the horizontally-pinned product column that Safari drops when a cell
 // gets its own compositing layer. Keep the two apart.
 function thClass(isWinner, incomplete) {
+  // px-3 here and px-3 on the body cells — identical horizontal padding is what
+  // keeps a sticky header visually aligned with the column scrolling under it.
   const base =
-    'snap-store-col sticky top-0 z-20 min-w-[176px] px-5 py-4 align-top ' +
-    'border-b border-slate-200/70 transition-colors duration-200'
-  if (isWinner) return `${base} bg-emerald-50/95 backdrop-blur-md`
-  if (incomplete) return `${base} bg-amber-50/80 backdrop-blur-md`
-  return `${base} bg-white/85 backdrop-blur-md`
+    'snap-store-col sticky top-0 z-20 w-[150px] min-w-[150px] px-3 py-2.5 align-top ' +
+    'border-b border-l border-gray-100 transition-colors duration-200'
+  if (isWinner) return `${base} bg-emerald-50/90 backdrop-blur-md`
+  if (incomplete) return `${base} bg-amber-50/70 backdrop-blur-md`
+  return `${base} bg-white/80 backdrop-blur-md`
 }
 
 function tdClass(isWinner) {
+  // Matches the header's px-3 exactly. py-2 keeps rows tight so more products
+  // fit on a phone screen.
   const base =
-    'snap-store-col px-5 py-4 text-center tabular-nums border-b border-slate-100/80 ' +
-    'transition-all duration-200'
+    'snap-store-col w-[150px] min-w-[150px] px-3 py-2 text-center tabular-nums ' +
+    'border-b border-l border-gray-100 transition-all duration-200'
   return isWinner
-    ? `${base} bg-emerald-50/60 font-bold text-emerald-800 group-hover:bg-emerald-100/60`
-    : `${base} bg-white font-semibold text-slate-700 group-hover:bg-slate-50/80`
+    ? `${base} bg-emerald-50/50 font-bold text-emerald-800 group-hover:bg-emerald-100/60`
+    : `${base} bg-white font-semibold text-slate-700 group-hover:bg-slate-50/70`
 }
 
 // Pinned-right product column.
@@ -54,8 +58,10 @@ const STICKY = 'sticky right-0 border-l border-slate-200/80'
 // SOLID backgrounds, deliberately. No backdrop-blur and no transform on these:
 // a compositing layer on a horizontally-pinned cell is exactly what made Safari
 // drop this column mid-scroll.
-const stickyHead = `${STICKY} top-0 z-40 bg-white px-5 py-4 text-right text-[11px] font-semibold uppercase tracking-widest text-slate-400 border-b border-slate-200/70`
-const stickyBody = `${STICKY} z-30 bg-white px-4 py-3 text-right border-b border-slate-100/80 transition-colors duration-200 group-hover:bg-slate-50/80`
+const stickyHead = `${STICKY} top-0 z-40 bg-white px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-widest text-slate-400 border-b border-gray-100`
+// No per-row bottom border: the product column should read as ONE list, not a
+// stack of disconnected cells. Separation comes from the row spacing itself.
+const stickyBody = `${STICKY} z-30 bg-white px-3 py-2 text-right transition-colors duration-200 group-hover:bg-slate-50/70`
 
 export default function ComparisonTable({ result }) {
   const { products, stores, winner_store_id, complete_store_count, store_count, shown_store_count } =
@@ -80,7 +86,7 @@ export default function ComparisonTable({ result }) {
       {/* Winner / no-winner banner */}
       {winner ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-emerald-100 bg-gradient-to-l from-emerald-50 to-teal-50/50 p-5 shadow-sm ring-1 ring-emerald-600/5">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm ring-1 ring-emerald-600/10">
               🏆
             </span>
@@ -109,12 +115,6 @@ export default function ComparisonTable({ result }) {
         </div>
       )}
 
-      <p className="px-1 text-sm text-slate-500">
-        {shown < store_count
-          ? `מוצגים ${shown} הסניפים המשתלמים מתוך ${store_count} בעיר`
-          : `הושוו ${store_count} סניפים`}{' '}
-        · {complete_store_count} מחזיקים את כל המוצרים
-      </p>
 
       {/* Single scroll context (w-full + overflow-x-auto). Table is min-w-max so it
           grows past the viewport and scrolls natively in RTL. */}
@@ -189,21 +189,21 @@ export default function ComparisonTable({ result }) {
                 <td className={stickyBody}>
                   {/* Image + name share the sticky cell so the tile scrolls
                       with the product it belongs to. */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5">
                     <ProductImage
                       barcode={p.barcode}
                       name={p.name}
-                      size="md"
-                      className="shadow-sm ring-1 ring-slate-900/5"
+                      size="sm"
+                      className="shadow-sm ring-1 ring-gray-100"
                     />
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate font-semibold leading-snug text-slate-800">
+                      <span className="truncate text-[13px] font-semibold leading-tight text-slate-800">
                         {p.name || productCode(p.barcode)}
                       </span>
                       {/* Secondary line in a lighter weight — brand and size are
                           context, not the thing being compared. */}
                       {(p.manufacturer || p.unit_of_measure) && (
-                        <span className="truncate text-xs font-normal text-slate-400">
+                        <span className="truncate text-[11px] font-normal leading-tight text-slate-400">
                           {[p.manufacturer, p.unit_of_measure].filter(Boolean).join(' · ')}
                         </span>
                       )}

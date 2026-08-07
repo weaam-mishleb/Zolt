@@ -206,7 +206,7 @@ export default function App() {
       </main>
 
       <footer className="mx-auto w-full max-w-6xl px-4 py-6 text-center text-xs text-slate-400">
-        Zolt · השוואת מחירים · <a href="/admin" className="transition hover:text-emerald-600">ניהול</a>
+        Zolt · השוואת מחירים
       </footer>
     </div>
   )
