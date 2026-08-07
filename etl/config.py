@@ -33,6 +33,29 @@ def _load_chains() -> dict[str, str]:
 
 
 CHAINS: dict[str, str] = _load_chains()
+
+
+# chain_id -> the name to SHOW, overriding whatever `chainname` the feed sends.
+#
+# Keyed on the numeric chain_id, not on the name it is replacing. The name is the
+# thing we already know to be unstable — it is free text a supplier types, and a
+# key that has to match it exactly is the same trap that left "דלית אל כרמל"
+# aliased while the data spelled it "דליית אל כרמל", so the alias never fired and
+# nothing reported it. The chain_id is an assigned barcode prefix and does not
+# drift.
+def _load_display_names() -> dict[str, str]:
+    try:
+        data = json.loads(_CHAINS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        str(k).strip(): str(v).strip()
+        for k, v in (data.get("display_names") or {}).items()
+        if k and v
+    }
+
+
+CHAIN_DISPLAY_NAMES: dict[str, str] = _load_display_names()
 CHAIN_IDS: dict[str, str] = {
     "shufersal": "7290027600007",
     "rami_levy": "7290058140886",

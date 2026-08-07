@@ -30,6 +30,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from .cities import normalize_city
+from .config import CHAIN_DISPLAY_NAMES
 
 # Values that mean "no data" in the feed.
 # "unknown" is the feed's OTHER null marker, alongside the Hebrew "לא ידוע".
@@ -155,7 +156,14 @@ def normalize_store(row: dict, chain_name_default: str) -> dict | None:
         return None
     return {
         "chain_id": chain_id,
-        "chain_name": clean_str(row.get("chainname")) or chain_name_default,
+        # The override wins over the feed's own `chainname`: a supplier that
+        # publishes its registered company name ("... בע\"מ") is not wrong, it is
+        # just not what a shopper is looking for on a price card.
+        "chain_name": (
+            CHAIN_DISPLAY_NAMES.get(chain_id)
+            or clean_str(row.get("chainname"))
+            or chain_name_default
+        ),
         "sub_chain_id": norm_code(row.get("subchainid")) or "",
         "store_code": store_code,
         "store_name": clean_str(row.get("storename")),

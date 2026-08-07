@@ -1,4 +1,8 @@
 {
+  "_display_names_comment": "chain_id -> the name to SHOW, overriding the `chainname` the feed sends. Some suppliers publish their registered company name rather than the brand a shopper recognises. Keyed on chain_id because that is stable; the name is free text and a key matching it exactly would silently stop firing the day the supplier retypes it.",
+  "display_names": {
+    "7290644700005": "פז-yellow"
+  },
   "_comment": "Single source of truth for the chains the pipeline loads. The GitHub Actions matrix reads this file, so adding a chain is a one-line change here — no workflow edit. `slug` must match the dataset filenames: price_full_file_<slug>.csv / store_file_<slug>.csv / promo_file_<slug>.csv. Set enabled=false to park a chain without deleting its config; when you do, say why in `reason` — a disabled chain with no reason gets re-enabled by the next person and fails again.",
   "chains": [
     { "slug": "shufersal",                    "name": "שופרסל",                    "enabled": true },

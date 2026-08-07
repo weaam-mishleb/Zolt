@@ -160,3 +160,39 @@ def test_canonical_city_is_idempotent_and_cycle_safe():
         once = canonical_city(source)
         assert once == canonical_city(once), f"{source!r} does not settle"
         assert once == canonical_city(target)
+
+
+# ── chain display names ─────────────────────────────────────────────────────
+def test_chain_display_name_overrides_the_feeds_own_name():
+    """Some suppliers publish their registered company name rather than the brand
+    a shopper recognises. The override is keyed on chain_id, not on the name it
+    replaces — a key that had to match free text would stop firing silently the
+    day the supplier retyped it."""
+    from etl.config import CHAIN_DISPLAY_NAMES
+    from etl.normalize import normalize_store
+
+    assert CHAIN_DISPLAY_NAMES, "no display_names loaded from chains.json"
+    chain_id, expected = next(iter(CHAIN_DISPLAY_NAMES.items()))
+    row = {
+        "chainid": chain_id,
+        "storeid": "1",
+        "chainname": 'משהו אחר לגמרי בע"מ',
+        "storename": "x",
+        "address": "y",
+        "city": "תל אביב",
+    }
+    assert normalize_store(row, "fallback")["chain_name"] == expected
+
+
+def test_chain_without_an_override_keeps_the_feed_name():
+    from etl.normalize import normalize_store
+
+    row = {
+        "chainid": "7290027600007",
+        "storeid": "2",
+        "chainname": "שופרסל",
+        "storename": "x",
+        "address": "y",
+        "city": "תל אביב",
+    }
+    assert normalize_store(row, "fallback")["chain_name"] == "שופרסל"
