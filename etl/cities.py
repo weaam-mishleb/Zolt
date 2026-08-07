@@ -169,6 +169,38 @@ def _from_store_name(store_name) -> str | None:
 
 
 
+# ── manually reviewed aliases for the high-frequency stragglers ─────────────
+#
+# Reviewed by hand from a frequency count of the branches still without a city.
+# Several are NEIGHBOURHOODS, not localities, so they map to their parent city —
+# a shopper filtering by עיר expects a Haifa branch under חיפה, not under הדר.
+#
+# One correction against what was proposed: יד אליהו maps to "תל אביב", not
+# "תל אביב-יפו". That spelling is absent from the CBS list, and CITY_ALIASES
+# already canonicalises all eleven Tel Aviv variants to "תל אביב", under which
+# 114 stores are already filed. A second spelling would silently split the city
+# filter in half. Conversely "סח'נין" and "יהוד-מונוסון" DO match CBS and heal
+# splits that already existed in the data.
+CITY_ALIASES.update({
+    "יהוד": "יהוד-מונוסון",
+    "אור ים": "אור עקיבא",              # neighbourhood
+    'פ"ת': "פתח תקווה",
+    "בילו": "קרית עקרון",               # the Bilu Center
+    "דלית אל כרמל": "דאלית אל-כרמל",
+    "יד אליהו": "תל אביב",              # neighbourhood — see note above
+    "קרית חיים": "חיפה",                # neighbourhood
+    "מאה שערים": "ירושלים",             # neighbourhood
+    "מעלות": "מעלות-תרשיחא",
+    "הדר": "חיפה",                      # neighbourhood
+    "סכנין": "סח'נין",
+    "גבעת עדה": "בנימינה-גבעת עדה",
+})
+
+# Brand names that look like place names. Without this "Am" (AM:PM) is the most
+# frequent unmatched string in the whole dataset.
+NOT_A_CITY = {"am", "am:pm", "ampm"}
+
+
 # ── the full CBS gazetteer ───────────────────────────────────────────────────
 #
 # The hand-built map above covers the 55 cities that happened to appear in three
@@ -292,9 +324,11 @@ def locality_from_store_name(store_name, address=None) -> str | None:
 
     # 1. whole-string match, which is the safest signal there is.
     for cand in candidates:
+        if _norm_locality(cand).lower() in NOT_A_CITY:
+            return None
         hit = _LOCALITY_INDEX.get(_norm_locality(cand))
         if hit:
-            return hit
+            return _corroborate(hit, store_name, address)
 
     # 2. SEGMENT match. Store names often append a neighbourhood or a branch
     #    marker after a separator — "שלי חיפה- חורב", "דיל קצרין- חרמון". Each
