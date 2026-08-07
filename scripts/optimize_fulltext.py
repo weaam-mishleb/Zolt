@@ -20,14 +20,10 @@ is rewritten — it tombstones the old one and appends the new. Every ETL run th
 touched `products.name` therefore added a tombstone per row, and nothing ever
 collected them. Every MATCH has to filter the whole list.
 
-`OPTIMIZE TABLE` with innodb_optimize_fulltext_only rebuilds just the FULLTEXT
-index and drops the tombstones — it does not rewrite the table.
-
-The rate of new tombstones is already far lower than it was: the loader now
-sends a product only when its merged attributes actually changed, which cut
-Shufersal from 1,151,672 product writes per run to 53,488. This collects what
-those earlier runs left behind, and is worth re-running whenever
-`scripts.dq_check --all` reports the ratio climbing again.
+This is NOT solved once. Every ETL run rewrites product names and regenerates
+them: one nightly load put 1,168,018 tombstones back (5x the live rows) and took
+search from 280ms to 548ms. That is why the ETL workflow now runs this at the
+end of every load rather than leaving it as a manual chore.
 
 Usage:
     python -m scripts.optimize_fulltext            # report only
@@ -41,9 +37,11 @@ import time
 
 from sqlalchemy import text
 
-# Tombstones are normal; a large MULTIPLE of the live rows is not. Below this the
-# rebuild costs more than it returns.
-WARN_RATIO = 2.0
+# Tombstones are normal; a MULTIPLE of the live rows is not. Set below 1.0
+# because this now runs after every nightly load, where one run alone puts back
+# ~5x — waiting for 2x would mean shipping a slow day whenever a load is small.
+# The rebuild costs 8.5s at this table size, so running it eagerly is cheap.
+WARN_RATIO = 0.5
 
 
 def _long_lived_engine():
@@ -106,16 +104,13 @@ def main() -> None:
         # moved every row from INNODB_FT_DELETED into INNODB_FT_BEING_DELETED
         # and cleared nothing. Measured, not assumed.
         #
-        # Dropping and re-adding the index rebuilds it from the live rows in one
-        # pass, with no tombstones by construction. Both changes go in a SINGLE
-        # ALTER so there is never a committed state where the index is missing
-        # and MATCH would error.
+        # TWO statements, not one ALTER. MySQL collapses a DROP and ADD of the
+        # same index in a single ALTER into a no-op — measured: 0.2s, tombstone
+        # count unchanged. Split, the DROP does the actual purge (318s when the
+        # index held 34M tombstones) and the ADD rebuilds from live rows.
         t0 = time.time()
-        conn.execute(text(
-            "ALTER TABLE products "
-            "DROP INDEX ft_product_name, "
-            "ADD FULLTEXT INDEX ft_product_name (name)"
-        ))
+        conn.execute(text("ALTER TABLE products DROP INDEX ft_product_name"))
+        conn.execute(text("ALTER TABLE products ADD FULLTEXT INDEX ft_product_name (name)"))
         elapsed = time.time() - t0
         print(f"  · FULLTEXT index rebuilt in {elapsed:.1f}s")
 

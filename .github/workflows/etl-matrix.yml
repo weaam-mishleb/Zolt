@@ -352,6 +352,23 @@ jobs:
       # is right — but a skip nobody notices is how a chain quietly disappears
       # for a month. This compares what is actually in the database against what
       # was planned, so a shrinking count is visible in the run summary.
+      # Rebuild the products FULLTEXT index after the load.
+      #
+      # InnoDB tombstones a document instead of removing it when the indexed
+      # column is rewritten, and every load rewrites product names. ONE nightly
+      # run put 1,168,018 tombstones back — 5x the live row count — and took
+      # search from 280ms to 548ms. Left alone it compounds: it had reached
+      # 34.6M and 10 SECONDS per query before anyone measured it.
+      #
+      # Cheap at this size (8.5s) and the only thing that keeps search fast
+      # without someone remembering to run a script.
+      - name: Rebuild the search index
+        if: always()
+        run: |
+          pip install -r etl/requirements.txt >/dev/null
+          python -m scripts.optimize_fulltext --apply || \
+            echo "::warning::FULLTEXT rebuild failed — search will be slow until it runs"
+
       - name: How many chains are actually in the database
         if: always()
         run: |

@@ -6,6 +6,8 @@ import re
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .cache import search_cache
+
 # Characters that carry special meaning in MySQL FULLTEXT BOOLEAN MODE.
 _BOOLEAN_OPERATORS = re.compile(r'[+\-><()~*"@]')
 
@@ -18,6 +20,13 @@ def _boolean_expr(q: str) -> str:
     tokens = [_BOOLEAN_OPERATORS.sub(" ", t).strip() for t in q.split()]
     tokens = [t for t in tokens if t]
     return " ".join(f"+{t}*" for t in tokens)
+
+
+def _remember(key, rows: list[dict]) -> list[dict]:
+    """Cache and return. A COPY goes in, so a caller mutating the list it got
+    back cannot corrupt what the next request sees."""
+    search_cache.set(key, [dict(r) for r in rows])
+    return rows
 
 
 def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
@@ -49,6 +58,17 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     if not q:
         return []
 
+    # Autocomplete repeats the same prefixes constantly within a session, and
+    # the underlying data only changes when the nightly ETL runs. Keyed on the
+    # query and limit — never the Session, which is per-request.
+    cache_key = (q, limit)
+    cached = search_cache.get(cache_key)
+    if cached is not None:
+        # A COPY on the way out as well as in. Handing back the cached list
+        # itself let a caller mutating one row rewrite what every later request
+        # sees — caught by a test, not by reading it.
+        return [dict(r) for r in cached]
+
     # Ranking: staples first. `availability` = number of branches carrying the
     # product — 'חלב 3% תנובה' (441 branches) must outrank 'מקציף חלב', which a
     # shortest-name-first sort used to bury. Prefix matches ("חלב…") still beat
@@ -69,7 +89,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
             """
         )
         rows = db.execute(bc_sql, {"prefix": f"{q}%", "limit": limit}).mappings().all()
-        return [dict(r) for r in rows]
+        return _remember(cache_key, [dict(r) for r in rows])
 
     expr = _boolean_expr(q)
     if expr:
@@ -93,7 +113,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
             ft_sql, {"expr": expr, "starts": f"{q}%", "limit": limit}
         ).mappings().all()
         if rows:
-            return [dict(r) for r in rows]
+            return _remember(cache_key, [dict(r) for r in rows])
 
     # Fallback — substring match, ranking exact prefixes first.
     like_sql = text(
@@ -113,7 +133,7 @@ def search_products(db: Session, q: str, limit: int = 10) -> list[dict]:
     rows = db.execute(
         like_sql, {"contains": f"%{q}%", "prefix": f"{q}%", "limit": limit}
     ).mappings().all()
-    return [dict(r) for r in rows]
+    return _remember(cache_key, [dict(r) for r in rows])
 
 
 def list_stores(
