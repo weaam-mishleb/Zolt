@@ -246,10 +246,34 @@ def locality_from_store_name(store_name) -> str | None:
             break
     candidates.append(stripped)
 
+    # 1. whole-string match, which is the safest signal there is.
     for cand in candidates:
         hit = _LOCALITY_INDEX.get(_norm_locality(cand))
         if hit:
             return hit
+
+    # 2. SEGMENT match. Store names often append a neighbourhood or a branch
+    #    marker after a separator — "שלי חיפה- חורב", "דיל קצרין- חרמון". Each
+    #    segment is still matched WHOLE, so this widens what is examined without
+    #    loosening what counts as a match.
+    #
+    #    Note what is deliberately NOT done: matching a bare token anywhere in
+    #    the name. "דלית אל כרמל" contains the token "כרמל", which is its own
+    #    locality, so token matching would confidently return the wrong town.
+    #    Segments keep multi-word names intact, so that trap cannot spring.
+    for cand in candidates:
+        segments = [seg for seg in re.split(r"[-–—|,/*]+", cand) if seg.strip()]
+        if len(segments) < 2:
+            continue
+        hits = [
+            _LOCALITY_INDEX[key]
+            for seg in segments
+            if (key := _norm_locality(seg)) in _LOCALITY_INDEX
+        ]
+        # Exactly one segment may name a locality. Two would mean the name is
+        # ambiguous ("רמלה - לוד"), and picking either is a coin toss.
+        if len(hits) == 1:
+            return hits[0]
     return None
 
 
