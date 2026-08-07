@@ -112,10 +112,15 @@ export default function App() {
     <div className="flex min-h-full flex-col bg-gradient-to-b from-slate-50 via-white to-emerald-50/40">
       <Header />
 
+      {/* Three explicitly-placed areas rather than two auto-flowed ones. The
+          cart sits BETWEEN the search and the results in DOM order, so on a
+          phone — one column, source order — it lands right under the search box
+          instead of below every result card. Explicit row/column placement then
+          puts it back in its own column on lg, spanning both rows, which is what
+          lets it stay beside the results instead of pushing them down. */}
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-6 px-4 py-8 lg:grid-cols-3">
-        {/* min-w-0 lets the wide comparison table scroll inside this grid column
-            instead of overflowing/clipping (grid items default to min-width:auto). */}
-        <section className="min-w-0 lg:col-span-2">
+        {/* 1 — heading + search */}
+        <section className="min-w-0 lg:col-span-2 lg:col-start-1 lg:row-start-1">
           <div className="mb-6">
             <h2 className="mb-1 text-2xl font-black tracking-tight text-slate-800 sm:text-3xl">
               כמה עולה הסל שלכם?
@@ -126,7 +131,31 @@ export default function App() {
           </div>
 
           <SearchBar onAdd={addProduct} />
+        </section>
 
+        {/* 2 — the cart. Wrapped rather than placed on <aside> directly so the
+            component stays unaware of its parent's grid; the wrapper spans both
+            rows, which is the room the sticky aside inside it needs to travel. */}
+        <div className="lg:col-start-3 lg:row-span-2 lg:row-start-1">
+          <BasketSidebar
+            items={basket}
+            cities={cities}
+            city={city}
+            onCityChange={setCity}
+            onInc={inc}
+            onDec={dec}
+            onSetQty={setQty}
+            onRemove={remove}
+            onClear={clear}
+            onCompare={handleCompare}
+            comparing={comparing}
+          />
+        </div>
+
+        {/* 3 — results. min-w-0 lets the wide comparison table scroll inside this
+            grid column instead of overflowing/clipping (grid items default to
+            min-width:auto). */}
+        <section className="min-w-0 lg:col-span-2 lg:col-start-1 lg:row-start-2">
           {comparing && (
             <div className="animate-in mt-8 rounded-3xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
               משווים מחירים בין הסניפים… ⏳
@@ -206,20 +235,6 @@ export default function App() {
             </div>
           )}
         </section>
-
-        <BasketSidebar
-          items={basket}
-          cities={cities}
-          city={city}
-          onCityChange={setCity}
-          onInc={inc}
-          onDec={dec}
-          onSetQty={setQty}
-          onRemove={remove}
-          onClear={clear}
-          onCompare={handleCompare}
-          comparing={comparing}
-        />
       </main>
 
       <footer className="mx-auto w-full max-w-6xl px-4 py-6 text-center text-xs text-slate-400">

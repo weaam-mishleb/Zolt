@@ -60,3 +60,70 @@ def test_normalize_city(raw, store_name, expected):
 )
 def test_city_dedup_variants(raw, expected):
     assert normalize_city(raw) == expected
+
+
+# ── canonical merges ────────────────────────────────────────────────────────
+# These guard the split that actually happened in production: the alias
+# validator only ever checked ALIAS TARGETS, so a duplicate spelling arriving
+# through the CBS-code path or through the verbatim fallback sailed straight
+# past it. 11 places ended up filed under two spellings, stranding 34 branches.
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        # 1. the CBS-code path: the gazetteer calls Tel Aviv "תל אביב - יפו",
+        #    this project files it as "תל אביב". Rami Levy / Osher Ad send codes.
+        ("5000", "תל אביב"),
+        # 2. the same spelling arriving as text
+        ("תל אביב - יפו", "תל אביב"),
+        # 3. the verbatim fallback: a feed typo became a city of its own
+        #    (one branch, on רחוב הארבעה — the address is what identified it)
+        ("תל אבית יפה", "תל אביב"),
+        # already canonical: must survive untouched
+        ("תל אביב", "תל אביב"),
+        # קריית vs קרית, both directions of the split
+        ("קריית מוצקין", "קרית מוצקין"),
+        ("קריית מלאכי", "קרית מלאכי"),
+        # hyphen/space variants of a compound locality
+        ("פרדס חנה כרכור", "פרדס חנה-כרכור"),
+        ("מעלות תרשיחא", "מעלות-תרשיחא"),
+        ("קדימה צורן", "קדימה-צורן"),
+        # spelled with two yods, which is why the existing alias never matched
+        ("דליית אל כרמל", "דאלית אל-כרמל"),
+        # renamed municipality
+        ("נצרת עילית - נוף הגליל", "נוף הגליל"),
+    ],
+)
+def test_canonical_merge_collapses_duplicate_spellings(raw, expected):
+    assert normalize_city(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["חצור", "יקנעם", "מיתרים"])
+def test_ambiguous_names_are_never_merged(raw):
+    """A wrong city is worse than none — it prices a basket against the wrong
+    branches and looks fine doing it. חצור could be חצור הגלילית or חצור-אשדוד."""
+    from etl.cities import CANONICAL_MERGES
+
+    assert raw not in CANONICAL_MERGES
+
+
+def test_every_merge_target_is_a_known_locality():
+    """A typo here silently splits a city instead of healing one, so the loader
+    drops unknown targets. If this fails, an entry was silently discarded."""
+    import json
+    import pathlib
+
+    from etl.cities import CANONICAL_MERGES
+
+    raw = json.loads(
+        (pathlib.Path(__file__).parents[2] / "etl" / "city_aliases.json").read_text("utf-8")
+    )
+    assert len(CANONICAL_MERGES) == len(raw.get("canonical_merges") or {})
+
+
+def test_canonical_city_is_idempotent_and_cycle_safe():
+    from etl.cities import CANONICAL_MERGES, canonical_city
+
+    for source, target in CANONICAL_MERGES.items():
+        once = canonical_city(source)
+        assert once == canonical_city(once), f"{source!r} does not settle"
+        assert once == canonical_city(target)

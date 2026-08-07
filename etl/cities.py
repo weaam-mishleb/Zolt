@@ -266,6 +266,67 @@ REVIEWED_ALIASES, NOT_A_CITY = _load_reviewed_aliases()
 _REVIEWED_KEYS = {_norm_locality(k) for k in REVIEWED_ALIASES}
 CITY_ALIASES.update(REVIEWED_ALIASES)
 
+
+# ── canonical merges: one place, one string ─────────────────────────────────
+#
+# The validator above guards ALIAS TARGETS. It cannot guard the two OTHER ways a
+# name reaches the database, and both had already emitted a second spelling for a
+# city that the comparison filter then treats as a different place entirely:
+#
+#   1. The CBS-code path returns the gazetteer's own spelling. The gazetteer
+#      calls Tel Aviv "תל אביב - יפו"; this project files it under "תל אביב"
+#      (see the note above — the split was predicted, but the guard was put on
+#      the one door it does not come through). Rami Levy and Osher Ad send codes,
+#      so 14 branches landed under the second spelling.
+#   2. `normalize_city` ends with `CITY_ALIASES.get(cleaned, cleaned)`. That
+#      fallback stores ANY unrecognised Hebrew string verbatim, so a feed typo
+#      becomes a city: "תל אבית יפה" is one Tel Aviv branch on רחוב הארבעה.
+#
+# An alias cannot fix either, because neither path consults the alias table. So
+# the merge is applied at the END of every path instead — one choke point no
+# return can bypass.
+#
+# Measured against production before this was written: 11 places filed under two
+# spellings each, stranding 34 branches where a shopper who picks the main
+# spelling never sees them. Ambiguous leftovers were deliberately NOT merged —
+# "יקנעם" could be יקנעם עילית or יקנעם (מושבה) and "חצור" could be חצור
+# הגלילית or חצור-אשדוד. A wrong city is worse than none: it silently prices a
+# basket against the wrong branches and looks fine doing it.
+def _load_canonical_merges() -> dict[str, str]:
+    try:
+        data = json.loads(_ALIASES_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}                     # never break an import over a data file
+
+    known = set(LOCALITY_CODE_TO_NAME.values()) | set(CITY_ALIASES.values())
+    out: dict[str, str] = {}
+    for source, target in (data.get("canonical_merges") or {}).items():
+        if not target or target not in known:
+            print(
+                f"  ! city_aliases.json: canonical_merges {source!r} -> {target!r} is not a "
+                f"known locality — ignoring it rather than inventing a city",
+                file=sys.stderr,
+            )
+            continue
+        if source != target:
+            out[source] = target
+    return out
+
+
+CANONICAL_MERGES = _load_canonical_merges()
+
+
+def canonical_city(name):
+    """Collapse a known duplicate spelling onto the string the filter matches on."""
+    # Follows a chain (a -> b -> c) so the data file does not have to be kept
+    # transitively flattened by hand, with a seen-set because one careless edit
+    # making two names point at each other would otherwise hang the whole ETL.
+    seen = set()
+    while name in CANONICAL_MERGES and name not in seen:
+        seen.add(name)
+        name = CANONICAL_MERGES[name]
+    return name
+
 # The index was built from the gazetteer above, before these existed — fold them
 # in, or a reviewed alias is loaded and then never consulted.
 for _variant, _canon in REVIEWED_ALIASES.items():
@@ -456,7 +517,19 @@ def _corroborate(candidate: str, store_name, address, source: str = "") -> str |
 
 
 def normalize_city(raw_city, store_name=None, address=None) -> str | None:
-    """Return a canonical city name from the raw feed value (+ store name)."""
+    """Return a canonical city name from the raw feed value (+ store name).
+
+    Thin on purpose: the resolution lives in `_resolve_city`, and everything it
+    returns goes through `canonical_city` on the way out. The resolver has three
+    separate ways to produce a name and each of them has shipped a duplicate
+    spelling at least once, so the collapse belongs here — at the single exit —
+    rather than inside any one of them.
+    """
+    return canonical_city(_resolve_city(raw_city, store_name, address))
+
+
+def _resolve_city(raw_city, store_name=None, address=None) -> str | None:
+    """Best-effort city from the feed value, the store name, then the address."""
     cleaned = _clean(raw_city)
     if cleaned is None:
         return _from_store_name(store_name) or locality_from_store_name(store_name, address)

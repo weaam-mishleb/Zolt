@@ -1,6 +1,26 @@
 {
  "_note": "Hand-reviewed only. Each value MUST be a locality the CBS list knows (etl/localities.json) or an existing canonical city — cities.py rejects anything else loudly, because a typo here silently splits a city in the comparison filter, which matches stores on the EXACT string.",
  "_workflow": "python -m scripts.export_unmapped_cities -o review.csv → fill the `city` column → --emit-json review.csv > etl/city_aliases.json",
+ "_canonical_merges_note": "Duplicate spellings of ONE place, collapsed onto the one string the comparison filter matches on. Different from `aliases`: an alias resolves a raw feed value that failed to match, a merge overrides a name the resolver already produced — including from the CBS-code path, which returns the gazetteer's own spelling ('תל אביב - יפו') where this project files the city as 'תל אביב'. Targets are validated exactly like alias targets. Measured 2026-08-07 against production: 11 places were filed under two spellings, stranding 34 branches that a shopper picking the main spelling never saw.",
+ "canonical_merges": {
+  "תל אביב - יפו": "תל אביב",
+  "תל אבית יפה": "תל אביב",
+  "פרדס חנה כרכור": "פרדס חנה-כרכור",
+  "קריית מוצקין": "קרית מוצקין",
+  "קריית מלאכי": "קרית מלאכי",
+  "מעלות תרשיחא": "מעלות-תרשיחא",
+  "דליית אל כרמל": "דאלית אל-כרמל",
+  "יהוד": "יהוד-מונוסון",
+  "גבעז זאב": "גבעת זאב",
+  "נצרת עילית - נוף הגליל": "נוף הגליל",
+  "עפולה עילית": "עפולה",
+  "רמת אפעל": "רמת גן",
+  "קדימה": "קדימה-צורן",
+  "קדימה צורן": "קדימה-צורן",
+  "אום אל פחם": "אום אל-פחם",
+  "דיר חנא": "דייר חנא",
+  "מודיעין": "מודיעין-מכבים-רעות"
+ },
  "aliases": {
   "יהוד": "יהוד-מונוסון",
   "אור ים": "אור עקיבא",
