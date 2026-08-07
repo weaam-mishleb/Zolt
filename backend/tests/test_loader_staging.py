@@ -64,6 +64,28 @@ def _sql(loader):
     return [s for s, _ in loader.engine.log]
 
 
+def test_bulk_upsert_is_strictly_sliced_into_5000_row_transactions():
+    """A full promotion catalogue can approach one million item links.
+
+    The caller may hand Loader the whole extracted chunk, but no individual
+    executemany transaction may grow past the promotion loader's 5,000-row
+    boundary: bounded packets, bounded undo/locks, and bounded retry cost.
+    """
+    loader = Loader(_Engine(), batch_size=5_000, retry_base_delay=0.001)
+    rows = [{"promotion_id": i, "canonical_id": i, "is_gift": 0} for i in range(12_001)]
+
+    loader.upsert_many(
+        "INSERT IGNORE INTO promotion_items VALUES (...) ",
+        rows,
+        ("promotion_id", "canonical_id", "is_gift"),
+        "promotion_items upsert",
+    )
+
+    batches = [params for _sql, params in loader.engine.log]
+    assert [len(batch) for batch in batches] == [5_000, 5_000, 2_001]
+    assert loader.rows_written["promotion_items upsert"] == 12_001
+
+
 # ── the staging table itself ────────────────────────────────────────────────
 def test_the_staging_table_has_no_index_no_unique_key_and_no_foreign_keys():
     """That absence IS the optimisation. An index here would reintroduce exactly

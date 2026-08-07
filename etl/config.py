@@ -69,6 +69,15 @@ CHAIN_IDS: dict[str, str] = {
 BATCH_SIZE = 250
 CHUNK_SIZE = 5_000
 
+# Promotion headers and links are narrow rows compared with products/prices.
+# A full catalogue can produce close to one million promotion_items for ONE
+# chain, so 250-row transactions spend most of their time on WAN round trips.
+# Keep the conservative global batch for the other loaders, but let promotions
+# fill a bounded 5,000-row executemany.  At Railway's 64 MiB
+# max_allowed_packet this stays comfortably below the packet limit even for
+# the wider promotion-header statement.
+PROMOTION_WRITE_BATCH_SIZE = 5_000
+
 # The feed is "grouped": only the first row of each store block carries the
 # chain/store identity columns; the rest are blank. These columns are
 # forward-filled (carried down) before normalization. Per-product columns

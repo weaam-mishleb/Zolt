@@ -23,7 +23,13 @@ from pathlib import Path
 
 from sqlalchemy import bindparam, text
 
-from .config import BATCH_SIZE, CHAINS, CHUNK_SIZE, DEFAULT_DATA_DIR, promo_file
+from .config import (
+    CHAINS,
+    CHUNK_SIZE,
+    DEFAULT_DATA_DIR,
+    PROMOTION_WRITE_BATCH_SIZE,
+    promo_file,
+)
 from .loader import Loader
 from .normalize import clean_str, norm_code, parse_dt, product_key
 from .promo_formats import EXTRACTORS, classify_reward, detect_family
@@ -133,7 +139,14 @@ class _CanonicalCache:
 
 
 def load_chain(
-    engine, slug: str, data_dir: Path, *, full: bool, stats: Counter, dry_run: bool = False
+    engine,
+    slug: str,
+    data_dir: Path,
+    *,
+    full: bool,
+    stats: Counter,
+    dry_run: bool = False,
+    write_batch_size: int = PROMOTION_WRITE_BATCH_SIZE,
 ) -> None:
     from .run import _read_csv_chunks           # shared streaming + forward-fill reader
 
@@ -151,7 +164,12 @@ def load_chain(
     cache = _CanonicalCache(engine)
     # Same protections as the price loader: batches sorted into a shared lock
     # order, each its OWN transaction, READ COMMITTED, jittered deadlock retry.
-    writer = Loader(engine, batch_size=BATCH_SIZE)
+    # Loader owns the bounded executemany loop: every 5,000 rows get their own
+    # short READ COMMITTED transaction and retry boundary.  Do not turn the
+    # whole chain into one transaction — a full feed can approach one million
+    # links, which would retain locks/undo until the end and make one timeout
+    # replay all of it.
+    writer = Loader(engine, batch_size=write_batch_size)
     family, extract = None, None
     chain_promos = chain_links = 0
 
@@ -232,10 +250,18 @@ def load_chain(
                 by_store.setdefault((p["chain_id"], p["store_id"]), []).append(p["promo_id_src"])
             with engine.connect() as conn:
                 for (chain, sid), srcs in by_store.items():
-                    for i in range(0, len(srcs), BATCH_SIZE):
+                    # Keep the readback bounded for the same reason as writes:
+                    # a full catalogue can carry thousands of source ids for a
+                    # branch, and one giant expanding IN list stresses both the
+                    # client and MySQL's parser.
+                    for i in range(0, len(srcs), write_batch_size):
                         for pid, src in conn.execute(
                             _SELECT_PROMO_IDS,
-                            {"chain": chain, "store": sid, "srcs": srcs[i : i + BATCH_SIZE]},
+                            {
+                                "chain": chain,
+                                "store": sid,
+                                "srcs": srcs[i : i + write_batch_size],
+                            },
                         ).all():
                             id_of[(chain, sid, src)] = pid
 
@@ -290,7 +316,14 @@ def load_chain(
     print(f"    {slug:<12} promotions={chain_promos:<7} item links={chain_links:,}")
 
 
-def run(chains: list[str], data_dir: Path, *, full: bool, dry_run: bool = False) -> Counter:
+def run(
+    chains: list[str],
+    data_dir: Path,
+    *,
+    full: bool,
+    dry_run: bool = False,
+    write_batch_size: int = PROMOTION_WRITE_BATCH_SIZE,
+) -> Counter:
     from backend.app.db import engine
 
     t0 = time.time()
@@ -299,7 +332,15 @@ def run(chains: list[str], data_dir: Path, *, full: bool, dry_run: bool = False)
           f"{'full' if full else 'snapshot'}"
           f"{'  [DRY RUN — nothing is written]' if dry_run else ''}", flush=True)
     for slug in chains:
-        load_chain(engine, slug, data_dir, full=full, stats=stats, dry_run=dry_run)
+        load_chain(
+            engine,
+            slug,
+            data_dir,
+            full=full,
+            stats=stats,
+            dry_run=dry_run,
+            write_batch_size=write_batch_size,
+        )
 
     print("─" * 56)
     print(f"  rows read          : {stats['rows_read']:,}")
@@ -318,13 +359,27 @@ def main() -> None:
     p.add_argument("--chains", nargs="*", help="chain slugs (default: all configured)")
     p.add_argument("--full", action="store_true", help="use promo_full_file_*.csv")
     p.add_argument(
+        "--write-batch-size",
+        type=int,
+        default=PROMOTION_WRITE_BATCH_SIZE,
+        help="rows per promotion/header executemany transaction (default: 5000)",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="parse and resolve everything but write nothing — prints the same counters, "
              "so a shortfall can be located without touching the promotions tables",
     )
     args = p.parse_args()
-    run(args.chains or list(CHAINS), Path(args.data_dir), full=args.full, dry_run=args.dry_run)
+    if args.write_batch_size < 1:
+        p.error("--write-batch-size must be >= 1")
+    run(
+        args.chains or list(CHAINS),
+        Path(args.data_dir),
+        full=args.full,
+        dry_run=args.dry_run,
+        write_batch_size=args.write_batch_size,
+    )
 
 
 if __name__ == "__main__":

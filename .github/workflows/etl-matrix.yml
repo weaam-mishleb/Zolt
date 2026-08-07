@@ -310,7 +310,10 @@ jobs:
 
       - name: Load promotions — ${{ matrix.name }}
         if: env.LOAD_PROMOTIONS == 'true' && env.SKIP_CHAIN != 'true'
-        run: python -m etl.promotions --chains "$CHAIN"
+        # PromoFull is the complete active catalogue. promo_file_*.csv is only
+        # the supplier's incremental publication and measured 2,238 unique
+        # Yellow branch/promotions versus 128,849 in PromoFull.
+        run: python -m etl.promotions --chains "$CHAIN" --full
 
       # Verifies the chain's data is actually IN the database. A green job that
       # loaded nothing is worse than a red one — it looks like success.
