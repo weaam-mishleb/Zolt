@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import sys
 
 # ── CBS locality codes (סמל יישוב) → canonical name ──────────────────────────
 # Covers the codes that appear in the Rami Levy / Osher Ad store files.
@@ -168,7 +169,6 @@ def _from_store_name(store_name) -> str | None:
 
 
 
-
 # ── manually reviewed aliases for the high-frequency stragglers ─────────────
 #
 # Reviewed by hand from a frequency count of the branches still without a city.
@@ -181,24 +181,7 @@ def _from_store_name(store_name) -> str | None:
 # 114 stores are already filed. A second spelling would silently split the city
 # filter in half. Conversely "סח'נין" and "יהוד-מונוסון" DO match CBS and heal
 # splits that already existed in the data.
-CITY_ALIASES.update({
-    "יהוד": "יהוד-מונוסון",
-    "אור ים": "אור עקיבא",              # neighbourhood
-    'פ"ת': "פתח תקווה",
-    "בילו": "קרית עקרון",               # the Bilu Center
-    "דלית אל כרמל": "דאלית אל-כרמל",
-    "יד אליהו": "תל אביב",              # neighbourhood — see note above
-    "קרית חיים": "חיפה",                # neighbourhood
-    "מאה שערים": "ירושלים",             # neighbourhood
-    "מעלות": "מעלות-תרשיחא",
-    "הדר": "חיפה",                      # neighbourhood
-    "סכנין": "סח'נין",
-    "גבעת עדה": "בנימינה-גבעת עדה",
-})
 
-# Brand names that look like place names. Without this "Am" (AM:PM) is the most
-# frequent unmatched string in the whole dataset.
-NOT_A_CITY = {"am", "am:pm", "ampm"}
 
 
 # ── the full CBS gazetteer ───────────────────────────────────────────────────
@@ -241,6 +224,52 @@ for _code, _name in LOCALITY_CODE_TO_NAME.items():
     _LOCALITY_INDEX.setdefault(_norm_locality(_name), _name)
 for _variant, _canon in CITY_ALIASES.items():
     _LOCALITY_INDEX.setdefault(_norm_locality(_variant), _canon)
+
+# ── hand-reviewed aliases, loaded from data ─────────────────────────────────
+#
+# etl/city_aliases.json rather than a literal here: the reviewed list runs to
+# hundreds of entries, and a data file can be regenerated from a spreadsheet
+# (see scripts/export_unmapped_cities.py) without anyone editing Python.
+#
+# Every target is VALIDATED against the gazetteer on load. That check is not
+# ceremony: the comparison filter matches stores on the EXACT city string, so a
+# single typo — or a plausible-looking variant like "תל אביב-יפו" when the
+# canonical form is "תל אביב" — silently splits a city in half and half its
+# branches stop appearing. Loud beats subtle.
+_ALIASES_FILE = pathlib.Path(__file__).with_name("city_aliases.json")
+
+
+def _load_reviewed_aliases() -> tuple[dict[str, str], set[str]]:
+    try:
+        data = json.loads(_ALIASES_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, set()          # never break an import over a data file
+
+    known = set(LOCALITY_CODE_TO_NAME.values()) | set(CITY_ALIASES.values())
+    good: dict[str, str] = {}
+    for source, target in (data.get("aliases") or {}).items():
+        if target is None:
+            continue
+        if target not in known:
+            print(
+                f"  ! city_aliases.json: {source!r} -> {target!r} is not a known locality "
+                f"— ignoring it rather than inventing a city",
+                file=sys.stderr,
+            )
+            continue
+        good[source] = target
+    blocked = {str(x).strip().lower() for x in (data.get("not_a_city") or []) if x}
+    return good, blocked
+
+
+REVIEWED_ALIASES, NOT_A_CITY = _load_reviewed_aliases()
+CITY_ALIASES.update(REVIEWED_ALIASES)
+
+# The index was built from the gazetteer above, before these existed — fold them
+# in, or a reviewed alias is loaded and then never consulted.
+for _variant, _canon in REVIEWED_ALIASES.items():
+    _LOCALITY_INDEX[_norm_locality(_variant)] = _canon
+
 
 # Chain branding that sits in front of the locality in a store name.
 _CHAIN_PREFIXES = (

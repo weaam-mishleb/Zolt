@@ -1,0 +1,23 @@
+{
+ "_note": "Hand-reviewed only. Each value MUST be a locality the CBS list knows (etl/localities.json) or an existing canonical city — cities.py rejects anything else loudly, because a typo here silently splits a city in the comparison filter, which matches stores on the EXACT string.",
+ "_workflow": "python -m scripts.export_unmapped_cities -o review.csv → fill the `city` column → --emit-json review.csv > etl/city_aliases.json",
+ "aliases": {
+  "יהוד": "יהוד-מונוסון",
+  "אור ים": "אור עקיבא",
+  "בילו": "קרית עקרון",
+  "דלית אל כרמל": "דאלית אל-כרמל",
+  "יד אליהו": "תל אביב",
+  "קרית חיים": "חיפה",
+  "מאה שערים": "ירושלים",
+  "מעלות": "מעלות-תרשיחא",
+  "הדר": "חיפה",
+  "סכנין": "סח'נין",
+  "גבעת עדה": "בנימינה-גבעת עדה",
+  "פ\"ת": "פתח תקווה"
+ },
+ "not_a_city": [
+  "am",
+  "am:pm",
+  "ampm"
+ ]
+}
