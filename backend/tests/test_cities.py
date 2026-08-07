@@ -30,7 +30,7 @@ from etl.cities import normalize_city
         ("גבעתיים", None, "גבעתיים"),
         ("באר יעקב", None, "באר יעקב"),         # must NOT become "באר שבע"
         # Warehouse / no resolvable city → None
-        ("99999", "בזק מחסני מזון", None),
+        ("99999", "סניף ללא שם יישוב", None),
         ("", "", None),
     ],
 )
