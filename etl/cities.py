@@ -263,6 +263,7 @@ def _load_reviewed_aliases() -> tuple[dict[str, str], set[str]]:
 
 
 REVIEWED_ALIASES, NOT_A_CITY = _load_reviewed_aliases()
+_REVIEWED_KEYS = {_norm_locality(k) for k in REVIEWED_ALIASES}
 CITY_ALIASES.update(REVIEWED_ALIASES)
 
 # The index was built from the gazetteer above, before these existed — fold them
@@ -357,7 +358,7 @@ def locality_from_store_name(store_name, address=None) -> str | None:
             return None
         hit = _LOCALITY_INDEX.get(_norm_locality(cand))
         if hit:
-            return _corroborate(hit, store_name, address)
+            return _corroborate(hit, store_name, address, cand)
 
     # 2. SEGMENT match. Store names often append a neighbourhood or a branch
     #    marker after a separator — "שלי חיפה- חורב", "דיל קצרין- חרמון". Each
@@ -370,12 +371,20 @@ def locality_from_store_name(store_name, address=None) -> str | None:
     #    Segments keep multi-word names intact, so that trap cannot spring.
     venue = "|".join(re.escape(w) for w in _VENUE_WORDS)
     for cand in candidates:
+        raw_segments = [seg.strip() for seg in re.split(r"[-–—|,/*]+", cand) if seg.strip()]
+        # A reviewed alias may be keyed ON the venue form ("מתחם רונית"), so try
+        # the segment as written BEFORE stripping the venue word. Stripping first
+        # hid 25 hand-mapped branches behind a heuristic that was only ever meant
+        # to help when nobody had reviewed them.
+        for seg in raw_segments:
+            if _is_reviewed(seg):
+                return _corroborate(_LOCALITY_INDEX[_norm_locality(seg)],
+                                    store_name, address, seg)
         segments = [
             # A venue word glued to the front of a segment hides the locality:
             # "מתחם עין - חצבה" is עין חצבה, not חצבה.
-            re.sub(rf"^(?:{venue})\s+", "", seg.strip())
-            for seg in re.split(r"[-–—|,/*]+", cand)
-            if seg.strip()
+            re.sub(rf"^(?:{venue})\s+", "", seg)
+            for seg in raw_segments
         ]
         if len(segments) < 2:
             continue
@@ -393,9 +402,13 @@ def locality_from_store_name(store_name, address=None) -> str | None:
             for i in range(len(segments) - length + 1)
             for j in (i + length,)
         ]
-        hits = [
-            _LOCALITY_INDEX[key] for run in runs if (key := _norm_locality(run)) in _LOCALITY_INDEX
+        matched = [
+            (run, _LOCALITY_INDEX[key])
+            for run in runs
+            if (key := _norm_locality(run)) in _LOCALITY_INDEX
         ]
+        hits = [h for _, h in matched]
+        _matched_run = matched[0][0] if matched else None
         if not hits:
             continue
         # `runs` is ordered longest-first, so hits[0] is the most specific match.
@@ -403,11 +416,16 @@ def locality_from_store_name(store_name, address=None) -> str | None:
         # "רמלה - לוד" is a genuine coin toss.
         longest = [h for h in hits if len(h) == len(hits[0])]
         if len(set(longest)) == 1:
-            return _corroborate(hits[0], store_name, address)
+            return _corroborate(hits[0], store_name, address, _matched_run or cand)
     return None
 
 
-def _corroborate(candidate: str, store_name, address) -> str | None:
+def _is_reviewed(cand: str) -> bool:
+    """True when this string was mapped BY HAND rather than matched heuristically."""
+    return _norm_locality(cand) in _REVIEWED_KEYS
+
+
+def _corroborate(candidate: str, store_name, address, source: str = "") -> str | None:
     """Keep the match only if the address does not contradict it.
 
     The audit of 171 matches found ~7 wrong, all one shape: the matched segment
@@ -420,6 +438,13 @@ def _corroborate(candidate: str, store_name, address) -> str | None:
     match, only reject one. A store whose two sources disagree is exactly the
     case where guessing is worse than NULL.
     """
+    # A hand-reviewed alias outranks the heuristics. The vetoes exist to protect
+    # GUESSES: "קניון אורות" is a mall named after a place it is not in. But
+    # "מרכז מסחרי מיתר" is a mall IN Mitar named after it, and no rule can tell
+    # those apart from the text — a human reading the address can, and did.
+    # Overriding that reviewed decision was costing 32 correct recoveries.
+    if _is_reviewed(source):
+        return candidate
     if _looks_like_a_street(candidate, address):
         return None
     if _inside_a_venue_name(candidate, store_name, address):
