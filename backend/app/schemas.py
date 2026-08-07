@@ -82,6 +82,26 @@ class AppliedPromotion(BaseModel):
     min_basket_amount: float | None = None
 
 
+class AvailablePromotion(BaseModel):
+    """A promotion that EXISTS on this line but has NOT been applied — almost
+    always because the basket quantity has not reached `min_qty`.
+
+    Separate from AppliedPromotion on purpose: that model carries `savings`, and
+    there are no savings here yet. Reporting a number the shopper has not earned
+    is exactly the kind of thing this response should not do.
+    """
+
+    id: int
+    reward_kind: str
+    description: str | None = None
+    min_qty: float | None = None          # how many units unlock it
+    discounted_price: float | None = None
+    discount_rate: float | None = None
+    discount_amount: float | None = None
+    min_basket_amount: float | None = None
+    units_needed: float | None = None     # min_qty − quantity already in the basket
+
+
 class StoreItemPrice(BaseModel):
     product_id: int
     quantity: float
@@ -89,6 +109,9 @@ class StoreItemPrice(BaseModel):
     line_total: float | None = None  # after promotions
     original_line_total: float | None = None  # before promotions (struck through in the UI)
     applied_promotion: AppliedPromotion | None = None
+    # Set only when `applied_promotion` is None — the two are mutually exclusive,
+    # so the UI never has to decide which of them to believe.
+    available_promotion: AvailablePromotion | None = None
     found: bool
 
 

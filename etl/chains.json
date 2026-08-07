@@ -1,7 +1,20 @@
 {
   "_display_names_comment": "chain_id -> the name to SHOW, overriding the `chainname` the feed sends. Some suppliers publish their registered company name rather than the brand a shopper recognises. Keyed on chain_id because that is stable; the name is free text and a key matching it exactly would silently stop firing the day the supplier retypes it.",
+  "_display_names_values": "Every target below is the name already configured for that chain in the `chains` list — this map only stops the feed's registered-company name from overriding it. Keep them in sync: two spellings of one chain read as two chains.",
   "display_names": {
-    "7290644700005": "פז-yellow"
+    "7290644700005": "פז-yellow",
+    "7290492000005": "דור אלון",
+    "7290526500006": "סאלח דבאח",
+    "7290058197699": "גוד פארם",
+    "7290058156016": "סופר ספיר",
+    "7290058159628": "מעיין 2000",
+    "7290058173198": "זול ובגדול",
+    "7290058108879": "קינג סטור",
+    "7290058148776": "שוק העיר",
+    "7290058134977": "שפע ברכת השם",
+    "7290875100001": "ברקת",
+    "7290058289400": "משנת יוסף",
+    "5144744100002": "משנת יוסף"
   },
   "_comment": "Single source of truth for the chains the pipeline loads. The GitHub Actions matrix reads this file, so adding a chain is a one-line change here — no workflow edit. `slug` must match the dataset filenames: price_full_file_<slug>.csv / store_file_<slug>.csv / promo_file_<slug>.csv. Set enabled=false to park a chain without deleting its config; when you do, say why in `reason` — a disabled chain with no reason gets re-enabled by the next person and fails again.",
   "chains": [

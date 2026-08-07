@@ -217,7 +217,9 @@ def test_placeholder_addresses_become_none(raw):
     [
         ("הארבעה 6", "הארבעה 6"),
         ("  ויצמן 20  ", "ויצמן 20"),
-        ("כביש 4, בכניסה לפוריידיס 0", "כביש 4, בכניסה לפוריידיס 0"),
+        # The trailing lone zero is the feed's "no house number", so it is
+        # stripped — but only when it stands alone. See the pair of tests below.
+        ("כביש 4, בכניסה לפוריידיס 0", "כביש 4, בכניסה לפוריידיס"),
         ("שד' ירושלים", "שד' ירושלים"),
         ("Ben Gurion 1", "Ben Gurion 1"),
         ("ألقدس 3", "ألقدس 3"),
@@ -252,3 +254,60 @@ def test_normalize_store_nulls_a_placeholder_address():
     row = {"chainid": "7290027600007", "storeid": "9", "chainname": "שופרסל",
            "storename": "רמת החייל", "address": "{}", "city": "תל אביב"}
     assert normalize_store(row, "fallback")["address"] is None
+
+
+# ── trailing house-number zero ──────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("כביש ראשי 5614 0", "כביש ראשי 5614"),
+        ("אלקודס 0", "אלקודס"),
+        ("הדקל ,אזור תעשייה צפוני 0", "הדקל ,אזור תעשייה צפוני"),
+        ("ויצמן 0 0", "ויצמן"),
+        # A REAL house number must survive. The rule needs whitespace or a comma
+        # before the zero, so the 0 inside "20"/"100" is never touched — that is
+        # the whole difference between cleanup and data loss.
+        ("הרצל 20", "הרצל 20"),
+        ("הרצל 100", "הרצל 100"),
+        ("שדרות בן גוריון 10", "שדרות בן גוריון 10"),
+        ("דרך חיפה 502", "דרך חיפה 502"),
+    ],
+)
+def test_trailing_lone_zero_is_stripped_but_real_numbers_are_not(raw, expected):
+    from etl.normalize import clean_address
+
+    assert clean_address(raw) == expected
+
+
+def test_address_that_is_only_zeros_becomes_none_not_empty():
+    """Stripping runs BEFORE the validity checks, so a value that strips down to
+    nothing returns None rather than an empty string the UI would still render."""
+    from etl.normalize import clean_address
+
+    assert clean_address("0 0 0") is None
+    assert clean_address("א 0") is None      # one letter left over is not an address
+
+
+def test_every_display_name_matches_a_configured_chain_name():
+    """The override exists to stop the feed's company name winning — not to
+    invent a third spelling. Two spellings of one chain read as two chains."""
+    import json
+    import pathlib
+
+    from etl.config import CHAIN_DISPLAY_NAMES
+
+    data = json.loads(
+        (pathlib.Path(__file__).parents[2] / "etl" / "chains.json").read_text("utf-8")
+    )
+    configured = {c.get("name") for c in data.get("chains", [])}
+    # Two deliberate exceptions, both listed rather than pattern-matched so that
+    # adding a third is a decision someone makes on purpose:
+    #   פז-yellow   — has no `chains` entry at all; it arrives inside another
+    #                 chain's file, so there is no configured name to match.
+    #   משנת יוסף   — `chains` splits it as "משנת יוסף 1"/"משנת יוסף 2" because
+    #                 upstream publishes two files. The digit is a file-splitting
+    #                 artifact, not part of the brand, and must not reach a price
+    #                 card.
+    allowed = {"פז-yellow", "משנת יוסף"}
+    unknown = {v for v in CHAIN_DISPLAY_NAMES.values() if v not in configured} - allowed
+    assert not unknown, f"display names with no matching chain: {unknown}"

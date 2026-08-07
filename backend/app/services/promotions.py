@@ -163,6 +163,70 @@ def _ensure_promo_fields(stores: list[dict]) -> None:
         for item in store.get("items", []):
             item.setdefault("original_line_total", item.get("line_total"))
             item.setdefault("applied_promotion", None)
+            item.setdefault("available_promotion", None)
+
+
+def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
+    """Would this promotion actually make the line CHEAPER?
+
+    The guard is the whole reason this is not a one-liner. A FIXED_PRICE or
+    BUNDLE_PRICE promotion can sit above the shelf price — production has a
+    'גריל עוף' promo at ₪40.90 on a line priced ₪6.90, and the engine correctly
+    declines to apply it. Advertising it as a deal would be worse than showing
+    nothing: it invents a saving that does not exist and asks the shopper to buy
+    more to get it.
+    """
+    kind = promo.reward_kind
+    if kind == "FIXED_PRICE":
+        return promo.discounted_price is not None and promo.discounted_price < unit_price
+    if kind == "BUNDLE_PRICE":
+        return (
+            promo.discounted_price is not None
+            and promo.min_qty >= 1
+            and promo.discounted_price < unit_price * promo.min_qty
+        )
+    if kind == "PCT_OFF":
+        return bool(promo.discount_rate and promo.discount_rate > 0)
+    if kind == "NTH_FREE":
+        return promo.min_qty >= 1
+    # AMOUNT_OFF is basket-level — it is not about this product, so a badge on
+    # this line would be misleading. UNKNOWN has no numbers to reason about.
+    return False
+
+
+def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, int]) -> None:
+    """Surface a promotion the shopper has not unlocked yet, per line.
+
+    Only ever set where `applied_promotion` is None, so the two cannot both be
+    populated and the UI never has to choose between them.
+    """
+    by_canonical: dict[int, Promotion] = {}
+    for promo in promos:
+        for cid in promo.canonical_ids:
+            current = by_canonical.get(cid)
+            # Most reachable first — the lowest threshold is the one worth
+            # nudging toward. `id` only breaks ties, so the pick is stable.
+            if current is None or (promo.min_qty, promo.id) < (current.min_qty, current.id):
+                by_canonical[cid] = promo
+
+    for item in store["items"]:
+        if not item.get("found") or item.get("applied_promotion") or item.get("unit_price") is None:
+            continue
+        promo = by_canonical.get(canon_of.get(item["product_id"]))
+        if promo is None or not _worth_advertising(promo, Decimal(str(item["unit_price"]))):
+            continue
+        short = float(promo.min_qty) - float(item["quantity"])
+        item["available_promotion"] = {
+            "id": promo.id,
+            "reward_kind": promo.reward_kind,
+            "description": promo.description,
+            "min_qty": float(promo.min_qty),
+            "discounted_price": float(promo.discounted_price) if promo.discounted_price is not None else None,
+            "discount_rate": float(promo.discount_rate) if promo.discount_rate is not None else None,
+            "discount_amount": float(promo.discount_amount) if promo.discount_amount is not None else None,
+            "min_basket_amount": float(promo.min_basket_amount) if promo.min_basket_amount is not None else None,
+            "units_needed": short if short > 0 else None,
+        }
 
 
 def _rerank(result: dict, limit: int | None) -> None:
@@ -241,6 +305,9 @@ def apply_promotions(
         promos = promos_by_store.get(store["store_id"])
         if promos:
             _reprice_store(store, promos, canon_of, now)
+            # After repricing, so it can see which lines actually got a discount
+            # and leave those alone.
+            _attach_available(store, promos, canon_of)
 
     _rerank(result, limit)
     result["promotions_applied"] = any(s.get("total_savings", 0) > 0 for s in stores)

@@ -37,25 +37,41 @@ def main() -> int:
         ).all()
 
     # The same function the ETL uses, so the report cannot disagree with what the
-    # next load would produce.
-    doomed = [(sid, chain, name, addr) for sid, chain, name, addr in rows if clean_address(addr) is None]
-    if not doomed:
-        print(f"nothing to do — all {len(rows)} stored addresses survive clean_address().")
+    # next load would produce. Note it REWRITES as well as nulls — the trailing
+    # house-number zero turns "אלקודס 0" into "אלקודס" — so the comparison is
+    # against the cleaned value, not merely against None. An earlier version only
+    # looked for None and therefore reported "nothing to do" while 28 rows still
+    # needed rewriting.
+    plan = [
+        (sid, chain, name, addr, clean_address(addr))
+        for sid, chain, name, addr in rows
+        if clean_address(addr) != addr
+    ]
+    if not plan:
+        print(f"nothing to do — all {len(rows)} stored addresses already match clean_address().")
         return 0
 
-    by_value: dict[str, int] = {}
-    for *_, addr in doomed:
-        by_value[addr] = by_value.get(addr, 0) + 1
+    cleared = [p for p in plan if p[4] is None]
+    rewritten = [p for p in plan if p[4] is not None]
 
     print(f"addresses stored: {len(rows)}")
-    print(f"to be nulled:     {len(doomed)}  ({len(by_value)} distinct values)\n")
-    print(f"{'n':>5}   value")
-    print("-" * 60)
-    for value, n in sorted(by_value.items(), key=lambda kv: -kv[1]):
-        print(f"{n:>5}   {value!r}")
-    print("\nexamples:")
-    for sid, chain, name, addr in doomed[:5]:
-        print(f"  #{sid} {chain} · {name!r} -> address {addr!r} becomes NULL")
+    print(f"to be cleared:    {len(cleared)}")
+    print(f"to be rewritten:  {len(rewritten)}\n")
+
+    if cleared:
+        by_value: dict[str, int] = {}
+        for *_, addr, _ in cleared:
+            by_value[addr] = by_value.get(addr, 0) + 1
+        print("CLEARED (placeholder, not a place):")
+        for value, n in sorted(by_value.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:>4}   {value!r} -> NULL")
+        print()
+    if rewritten:
+        print("REWRITTEN (trailing house-number zero):")
+        for sid, _, _, addr, new in rewritten[:10]:
+            print(f"   #{sid}  {addr!r} -> {new!r}")
+        if len(rewritten) > 10:
+            print(f"   … and {len(rewritten) - 10} more")
 
     if not args.apply:
         print("\nDRY RUN — nothing written. Re-run with --apply to write it.")
@@ -63,11 +79,12 @@ def main() -> int:
 
     with engine.begin() as conn:
         total = 0
-        for sid, *_ in doomed:
+        for sid, _, _, _, new in plan:
             total += conn.execute(
-                text("UPDATE stores SET address = NULL WHERE id = :id"), {"id": sid}
+                text("UPDATE stores SET address = :a WHERE id = :id"), {"a": new, "id": sid}
             ).rowcount
-    print(f"\napplied — {total} addresses cleared.")
+    print(f"\napplied — {total} addresses updated "
+          f"({len(cleared)} cleared, {len(rewritten)} rewritten).")
     return 0
 
 

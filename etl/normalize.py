@@ -53,6 +53,10 @@ _PLACEHOLDERS = {
 _ADDRESS_NULLS = {"0", "0.0", "00", "-", "--", "—", ".", ",", "?"}
 # Hebrew, Arabic or Latin — the three scripts a street name here is written in.
 _HAS_LETTER = re.compile(r"[A-Za-z֐-׿؀-ۿ]")
+# A house number of zero, which the feed emits when it has no number at all:
+# "כביש ראשי 5614 0". The leading [\s,] is what keeps a real number intact —
+# in "הרצל 20" the character before the 0 is a digit, so nothing matches.
+_TRAILING_ZERO = re.compile(r"(?:[\s,]+0+)+[\s,]*$")
 
 # Product fields carried from a price row into the products table.
 PRODUCT_FIELDS = (
@@ -86,6 +90,12 @@ def clean_address(v) -> str | None:
     if s is None:
         return None
     if s.lower() in _ADDRESS_NULLS:
+        return None
+    # Strip the placeholder house number BEFORE validating: "אלקודס 0" has to
+    # become "אלקודס", and a value that is nothing but zeros has to end up None
+    # rather than as an empty string.
+    s = _TRAILING_ZERO.sub("", s).strip()
+    if not s or s.lower() in _ADDRESS_NULLS:
         return None
     # A street name cannot be punctuation or a bare number in any script.
     if not _HAS_LETTER.search(s):

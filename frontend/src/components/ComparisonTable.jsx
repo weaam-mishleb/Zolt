@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import ProductImage from './ProductImage.jsx'
-import PromotionBadge from './promotions/PromotionBadge.jsx'
+import PromotionBadge, { promoLabel } from './promotions/PromotionBadge.jsx'
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
 
 const ils = new Intl.NumberFormat('he-IL', {
@@ -53,6 +53,30 @@ function QtyBadge({ qty }) {
     <span className="inline-flex shrink-0 items-center justify-center self-start rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold leading-tight tabular-nums text-blue-700">
       <span className="sr-only">כמות </span>
       {qtyLabel(qty)}
+    </span>
+  )
+}
+
+// A promotion that EXISTS on this line but has not been unlocked yet.
+//
+// Deliberately a different colour from PromotionBadge. That badge means "you
+// saved this"; this one means "you could". Styling them alike would read as a
+// discount that has not happened — and the backend only sends this field when the
+// offer would genuinely make the line cheaper, so the tag must not overclaim what
+// it is: an invitation, not a receipt.
+function UpsellTag({ promo }) {
+  const label = promoLabel(promo)
+  if (!label) return null
+  const need = promo.units_needed
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-bold leading-none text-amber-800 ring-1 ring-amber-300/70">
+      <span aria-hidden="true">🏷️</span>
+      <span>{label}</span>
+      {need > 0 && (
+        <span className="font-medium text-amber-600">
+          · עוד {Number.isInteger(need) ? need : Number(need.toFixed(2))}
+        </span>
+      )}
     </span>
   )
 }
@@ -403,25 +427,34 @@ function MobileComparison({ products, stores, winnerStoreId, qtyOf }) {
           const it = lines[p.id]
           const missing = !it || !it.found
           return (
-            <li
-              key={p.id}
-              className={`flex items-center gap-3 px-3 py-2.5 ${missing ? 'bg-amber-50/40' : ''}`}
-            >
-              <ProductImage
-                barcode={p.barcode}
-                name={p.name}
-                size="sm"
-                className="shadow-sm ring-1 ring-gray-100"
-              />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="truncate text-[13px] font-semibold leading-tight text-slate-800">
-                  {displayName(p)}
-                </span>
-                <QtyBadge qty={qtyOf[p.id]} />
+            <li key={p.id} className={`px-3 py-2.5 ${missing ? 'bg-amber-50/40' : ''}`}>
+              <div className="flex items-center gap-3">
+                <ProductImage
+                  barcode={p.barcode}
+                  name={p.name}
+                  size="sm"
+                  className="shadow-sm ring-1 ring-gray-100"
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="truncate text-[13px] font-semibold leading-tight text-slate-800">
+                    {displayName(p)}
+                  </span>
+                  <QtyBadge qty={qtyOf[p.id]} />
+                </div>
+                <div className="shrink-0 text-left text-sm font-bold tabular-nums text-slate-800">
+                  <LinePrice it={it} align="end" />
+                </div>
               </div>
-              <div className="shrink-0 text-left text-sm font-bold tabular-nums text-slate-800">
-                <LinePrice it={it} align="end" />
-              </div>
+              {/* The tag goes on its own line under the price rather than beside
+                  it: the price column is only as wide as its number, and
+                  "3 ב-₪12.00 · עוד 2" does not fit there without wrapping mid-way
+                  through the offer. `justify-end` is the LEFT edge in RTL, so it
+                  still sits under the price it belongs to. */}
+              {it?.available_promotion && (
+                <div className="mt-1.5 flex justify-end">
+                  <UpsellTag promo={it.available_promotion} />
+                </div>
+              )}
             </li>
           )
         })}
