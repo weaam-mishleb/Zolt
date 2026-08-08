@@ -270,13 +270,16 @@ def _p(pid, kind, min_qty, price, ids=(7,)):
     )
 
 
-def _store(applied_id, charged, qty=1, unit_price="9.90"):
+def _store(applied_id, charged, qty=1, unit_price="9.90", applied_min_qty=None):
+    applied = {"id": applied_id}
+    if applied_min_qty is not None:
+        applied["min_qty"] = float(applied_min_qty)
     return {
         "store_id": 1,
         "items": [{
             "product_id": 99, "quantity": qty, "unit_price": float(unit_price),
             "line_total": charged, "found": True,
-            "applied_promotion": {"id": applied_id}, "available_promotion": None,
+            "applied_promotion": applied, "available_promotion": None,
             "alternative_promotion": None,
         }],
     }
@@ -473,3 +476,36 @@ def test_bundles_are_exempt_from_the_floor_at_a_convenience_store_too():
     lines = [BasketLine(canonical_id=7, quantity=_D("3"), unit_price=_D("9.90"))]
     r = price_basket(lines, [bundle], datetime(2026, 6, 15), single_unit_floor=True)
     assert r["final_total"] == pytest.approx(9.0)
+
+
+# ── same-tier rivals are noise, not transparency ────────────────────────────
+def test_a_stale_same_quantity_promotion_is_not_shown_as_the_runner_up():
+    """The screenshot case: "2 ב-22" applied while a stale "2 ב-25" is still
+    active. Telling the shopper the same two units could have cost more carries no
+    information and reads as a bug, so it must be dropped silently."""
+    store = _store(applied_id=1, charged=22.0, qty=2, unit_price="16.90", applied_min_qty=2)
+    _attach_alternative(
+        store, [_p(1, "BUNDLE_PRICE", 2, 22), _p(2, "BUNDLE_PRICE", 2, 25)], {99: 7}
+    )
+    assert store["items"][0]["alternative_promotion"] is None
+
+
+def test_same_tier_is_dropped_regardless_of_reward_kind():
+    """Matched on min_qty alone: a same-tier rival of a DIFFERENT kind is exactly
+    as informationless as one of the same kind."""
+    store = _store(applied_id=1, charged=5.0, qty=1, applied_min_qty=1)
+    _attach_alternative(
+        store, [_p(1, "FIXED_PRICE", 1, 5), _p(2, "FIXED_PRICE", 1, 6)], {99: 7}
+    )
+    assert store["items"][0]["alternative_promotion"] is None
+
+
+def test_a_different_quantity_tier_is_still_shown():
+    """The case the feature exists for must survive the filter: ₪5 a unit charged,
+    "3 ב-17" is a genuinely different offer at a different tier."""
+    store = _store(applied_id=1, charged=5.0, qty=1, applied_min_qty=1)
+    _attach_alternative(
+        store, [_p(1, "FIXED_PRICE", 1, 5), _p(2, "BUNDLE_PRICE", 3, 17)], {99: 7}
+    )
+    alt = store["items"][0]["alternative_promotion"]
+    assert alt is not None and alt["min_qty"] == 3.0 and alt["discounted_price"] == 17.0

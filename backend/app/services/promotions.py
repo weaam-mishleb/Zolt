@@ -371,10 +371,20 @@ def _attach_alternative(store: dict, promos: list[Promotion], canon_of: dict[int
         if not applied or not item.get("found") or not item.get("quantity"):
             continue
         charged = Decimal(str(item["line_total"])) / Decimal(str(item["quantity"]))
+        applied_min_qty = applied.get("min_qty")
         rivals = [
             (cost, p)
             for p in by_canonical.get(canon_of.get(item["product_id"]), [])
             if p.id != applied.get("id")
+            # Same quantity tier ⇒ no information. Chains leave a stale promotion
+            # active beside its replacement ("2 ב-25" beside "2 ב-22"), and telling
+            # the shopper the same two units could have cost more reads as a bug,
+            # not transparency. The runner-up earns its place only when the TIERS
+            # differ — "₪5 ליחידה" against "3 ב-17" is a real choice. Matched on
+            # min_qty alone, not (min_qty, kind): a same-tier rival of a different
+            # kind is exactly as informationless, so a kind check would only let
+            # graveyard entries back in.
+            and not (applied_min_qty is not None and float(p.min_qty) == float(applied_min_qty))
             and (cost := _unit_cost(p)) is not None
             and cost >= charged                       # never advertise a better deal
             and _worth_advertising(p, Decimal(str(item["unit_price"])), single_unit_floor=floor)
