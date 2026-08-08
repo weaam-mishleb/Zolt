@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import CityCombobox from './CityCombobox.jsx'
+import ProductImage from './ProductImage.jsx'
 
 export default function BasketSidebar({
   items,
@@ -52,6 +53,12 @@ export default function BasketSidebar({
                 >
                   ✕
                 </button>
+                <ProductImage
+                  barcode={product.barcode}
+                  name={product.name}
+                  size="sm"
+                  className="ring-1 ring-slate-200/70"
+                />
                 <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{product.name}</span>
                 <div className="flex shrink-0 items-center gap-1 rounded-full bg-white p-0.5 ring-1 ring-slate-200">
                   <button

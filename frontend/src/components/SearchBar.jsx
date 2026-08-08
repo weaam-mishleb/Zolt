@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { searchProducts } from '../api'
+import ProductImage from './ProductImage.jsx'
 import { useDebounce } from '../hooks/useDebounce'
 
 // "55 גרם" / "1 ק"ג" — package size from the feed, so generic butcher-counter
@@ -89,7 +90,13 @@ export default function SearchBar({ onAdd }) {
                 onClick={() => handleAdd(p)}
                 className="group flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-right transition hover:bg-emerald-50"
               >
-                <span className="min-w-0">
+                {/* Same tile the basket and the comparison use, so a product keeps
+                    one identity from search to result. It is placeholder-first by
+                    design: Open Food Facts has a usable image for 7% of our real
+                    GTINs (measured, scripts/off_coverage.py), so the generated
+                    monogram is the normal case rather than a fallback. */}
+                <ProductImage barcode={p.barcode} name={p.name} size="sm" className="ring-1 ring-slate-200/70" />
+                <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium text-slate-800">{p.name}</span>
                   {(p.manufacturer || sizeLabel(p) || p.is_weighted || p.availability > 0) && (
                     <span className="block truncate text-xs text-slate-400">
