@@ -23,13 +23,34 @@ import pytest
 from etl.loader import _PRICE_COLUMNS, _PRICE_UPDATE_COLUMNS, _PRICES_STAGE_DDL, Loader
 
 
+class _Transaction:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
 class _Conn:
-    def __init__(self, log):
-        self.log = log
+    def __init__(self, engine, connection_id):
+        self.engine = engine
+        self.log = engine.log
+        self.connection_id = connection_id
+        self.closed = False
 
     def execute(self, sql, params=None):
         self.log.append((" ".join(str(sql).split()), params))
+        self.engine.connection_ids.append(self.connection_id)
         return self
+
+    def begin(self):
+        return _Transaction(self)
+
+    def close(self):
+        self.closed = True
 
     def __enter__(self):
         return self
@@ -41,12 +62,19 @@ class _Conn:
 class _Engine:
     def __init__(self):
         self.log: list[tuple[str, object]] = []
+        self.connection_ids: list[int] = []
+        self.connections: list[_Conn] = []
+
+    def _connection(self, connection_class=_Conn):
+        conn = connection_class(self, len(self.connections) + 1)
+        self.connections.append(conn)
+        return conn
 
     def begin(self):
-        return _Conn(self.log)
+        return self._connection()
 
     def connect(self):
-        return _Conn(self.log)
+        return self._connection()
 
     def execution_options(self, **_kw):
         return self
@@ -94,6 +122,7 @@ def test_the_staging_table_has_no_index_no_unique_key_and_no_foreign_keys():
     assert "UNIQUE" not in ddl
     assert "FOREIGN KEY" not in ddl
     assert "KEY IDX" not in ddl
+    assert "CREATE TEMPORARY TABLE" in ddl
     # …except the surrogate PK, which exists only to slice the merge.
     assert "SEQ" in ddl and "AUTO_INCREMENT" in ddl
 
@@ -115,10 +144,26 @@ def test_a_session_creates_stages_merges_and_drops(loader):
     loader.stage_commit(_PRICE_UPDATE_COLUMNS, "prices upsert")
 
     sql = _sql(loader)
-    assert any(s.startswith("CREATE TABLE _stage_prices_") for s in sql)
+    assert any(s.startswith("CREATE TEMPORARY TABLE _stage_prices_") for s in sql)
     assert any(s.startswith("INSERT INTO _stage_prices_") for s in sql)
     assert any("INSERT INTO prices" in s and "SELECT" in s for s in sql)
-    assert sql[-1].startswith("DROP TABLE IF EXISTS _stage_prices_")
+    assert sql[-1].startswith("DROP TEMPORARY TABLE IF EXISTS _stage_prices_")
+
+
+def test_every_staging_statement_uses_one_pinned_connection(loader):
+    """TEMPORARY tables disappear if any batch rotates to another pool slot."""
+    loader.stage_begin("prices", _PRICES_STAGE_DDL, _PRICE_COLUMNS, ("product_id", "store_id"))
+    pinned = loader._stage["connection"]
+    loader.stage_add([{c: 1 for c in _PRICE_COLUMNS} for _ in range(250)], "prices upsert")
+    loader.stage_commit(
+        _PRICE_UPDATE_COLUMNS,
+        "prices upsert",
+        post_merge=("SELECT COUNT(*) FROM {stage}",),
+    )
+
+    # setup + 3 staged batches + 3 merge slices + post-merge + cleanup
+    assert len(set(loader.engine.connection_ids)) == 1
+    assert pinned.closed
 
 
 def test_the_merge_reads_the_staging_table_not_the_client(loader):
@@ -149,11 +194,15 @@ def test_the_merge_is_sliced_into_bounded_transactions(loader):
 def test_the_staging_table_is_dropped_even_when_the_merge_fails():
     """A leftover staging table is invisible to the app and would quietly eat
     the buffer pool this path exists to protect."""
-    class _Boom(_Engine):
-        def begin(self):
-            if any("INSERT INTO prices" in s for s, _ in self.log):
+    class _BoomConn(_Conn):
+        def execute(self, sql, params=None):
+            if " ".join(str(sql).split()).startswith("INSERT INTO prices"):
                 raise RuntimeError("merge exploded")
-            return _Conn(self.log)
+            return super().execute(sql, params)
+
+    class _Boom(_Engine):
+        def connect(self):
+            return self._connection(_BoomConn)
 
     ldr = Loader(_Boom(), batch_size=100, retry_base_delay=0.001)
     ldr.stage_begin("prices", _PRICES_STAGE_DDL, _PRICE_COLUMNS, ("product_id", "store_id"))
@@ -168,7 +217,7 @@ def test_an_empty_chain_still_cleans_up_and_merges_nothing(loader):
     loader.stage_commit(_PRICE_UPDATE_COLUMNS, "prices upsert")
     sql = _sql(loader)
     assert not any("INSERT INTO prices" in s for s in sql)
-    assert sql[-1].startswith("DROP TABLE IF EXISTS")
+    assert sql[-1].startswith("DROP TEMPORARY TABLE IF EXISTS")
 
 
 def test_rows_are_staged_in_the_conflict_key_order(loader):

@@ -18,7 +18,7 @@ import time
 from collections import Counter
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import OperationalError
 
 # Retryable MySQL errors, split by what they MEAN — the right response differs,
@@ -138,7 +138,7 @@ _SELECT_IDS_BY_BARCODE = text("SELECT id, barcode FROM products WHERE barcode IN
 # only the merge pays for index maintenance.
 # `seq` exists purely to slice the merge into bounded transactions.
 _PRICES_STAGE_DDL = """
-    CREATE TABLE {stage} (
+    CREATE TEMPORARY TABLE {stage} (
       seq               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       product_id        INT UNSIGNED    NOT NULL,
       store_id          INT UNSIGNED    NOT NULL,
@@ -267,14 +267,13 @@ class Loader:
         window = min(self.retry_base_delay * (2**attempt), self.retry_max_delay)
         return random.uniform(window / 2, window)
 
-    def _with_retry(self, operation, what: str):
+    def _with_retry(self, operation, what: str, *, reconnect: bool = True):
         """Run `operation()`, retrying the DB failures that are worth retrying.
 
-        No explicit rollback appears here on purpose. `_commit_batch` runs inside
-        `engine.begin()`, whose context manager rolls the transaction back when
-        an exception leaves the block and returns a clean connection to the pool;
-        on a deadlock MySQL has rolled it back already. Adding a manual
-        `.rollback()` would act on a transaction that no longer exists.
+        No explicit rollback appears here because `_commit_batch` always owns a
+        transaction context. Its context manager rolls back before the error
+        reaches this retry loop, including when it is using the staging
+        session's pinned connection.
         """
         for attempt in range(self.max_retries + 1):  # 1 initial try + max_retries
             try:
@@ -288,6 +287,12 @@ class Loader:
                     # Dead socket: the pool holds unusable connections. Drop it.
                     # NOT done for lock errors — see _LOCK_CONTENTION above.
                     self.engine.dispose()
+                    # A MySQL temporary table belongs to one physical session.
+                    # Reconnecting a pinned staging operation would produce a
+                    # new session with an empty namespace, so the only safe
+                    # recovery is to fail the chain and rerun it from its file.
+                    if not reconnect:
+                        raise
 
                 self._retries_total += 1
                 delay = self._backoff(attempt)
@@ -306,11 +311,27 @@ class Loader:
         protection."""
         return self._with_retry(operation, what)
 
-    def _commit_batch(self, sql, batch: list[dict]) -> None:
-        # A fresh connection from the pool (pre-ping) + its own short transaction.
-        # `begin()` commits on clean exit and rolls back on any exception.
-        with self.engine.begin() as conn:
-            conn.execute(sql, batch)
+    def _commit_batch(
+        self,
+        sql,
+        params: dict | list[dict],
+        *,
+        connection: Connection | None = None,
+    ) -> None:
+        if connection is None:
+            # A fresh connection from the pool (pre-ping) + its own short
+            # transaction. `begin()` commits on clean exit and rolls back on
+            # any exception.
+            with self.engine.begin() as conn:
+                conn.execute(sql, params)
+            return
+
+        # Staging pins one physical connection because MySQL TEMPORARY tables
+        # are session-scoped. Keep the transaction bounded to this one batch:
+        # one transaction around a million-row full file would retain locks and
+        # undo data for the entire parse, defeating the streaming design.
+        with connection.begin():
+            connection.execute(sql, params)
 
     def _executemany(self, sql, rows: list[dict], key_cols: tuple[str, ...], what: str) -> None:
         rows = _lock_ordered(rows, key_cols)
@@ -338,37 +359,52 @@ class Loader:
     # unindexed table and is merged once. Hence an explicit session —
     # stage_begin / stage_add per chunk / stage_commit at the end of the chain.
     def _stage_name(self, target: str) -> str:
-        """A private staging table per target, per process.
+        """A readable name for a connection-local staging table.
 
-        NOT a TEMPORARY table: those are scoped to one connection, and this
-        loader deliberately takes a fresh connection from the pool per batch so
-        a dropped socket costs one batch instead of the whole load. The pid
-        keeps two runners from colliding on the same name.
+        The table is TEMPORARY, so identical process IDs on separate GitHub
+        runners cannot collide in Railway's shared schema. The pid remains in
+        the name only to make database diagnostics easy to correlate with logs.
         """
         return f"_stage_{target}_{os.getpid()}"
-
-    def _run(self, sql, params=None) -> None:
-        with self.engine.begin() as conn:
-            conn.execute(sql, params or {})
 
     def stage_begin(
         self, target: str, ddl: str, columns: tuple[str, ...], key_cols: tuple[str, ...]
     ) -> None:
-        """Create the staging table for one chain's worth of rows."""
+        """Create a staging table and pin its MySQL session for the whole chain."""
+        if self._stage is not None:
+            raise RuntimeError("a staging session is already active")
+
         stage = self._stage_name(target)
+        insert = text(
+            f"INSERT INTO {stage} ({', '.join(columns)}) "
+            f"VALUES ({', '.join(':' + c for c in columns)})"
+        )
+
+        def setup() -> Connection:
+            conn = self.engine.connect()
+            try:
+                # A pooled physical connection can retain a temporary table if
+                # a previous loader was interrupted before cleanup. Both setup
+                # statements run on the connection that all later work uses.
+                self._commit_batch(
+                    text(f"DROP TEMPORARY TABLE IF EXISTS {stage}"), {}, connection=conn
+                )
+                self._commit_batch(text(ddl.format(stage=stage)), {}, connection=conn)
+                return conn
+            except BaseException:
+                conn.close()
+                raise
+
+        connection = self._with_retry(setup, "staging setup")
         self._stage = {
             "target": target,
             "table": stage,
             "columns": columns,
             "key_cols": key_cols,
             "count": 0,
-            "insert": text(
-                f"INSERT INTO {stage} ({', '.join(columns)}) "
-                f"VALUES ({', '.join(':' + c for c in columns)})"
-            ),
+            "insert": insert,
+            "connection": connection,
         }
-        self._with_retry(lambda: self._run(text(f"DROP TABLE IF EXISTS {stage}")), "staging setup")
-        self._with_retry(lambda: self._run(text(ddl.format(stage=stage))), "staging setup")
 
     def stage_add(self, rows: list[dict], what: str) -> None:
         """Append a chunk to the staging table.
@@ -384,7 +420,13 @@ class Loader:
         rows = _lock_ordered(rows, st["key_cols"])
         for i in range(0, len(rows), self.batch_size):
             batch = rows[i : i + self.batch_size]
-            self._with_retry(lambda b=batch: self._commit_batch(st["insert"], b), f"{what} (staging)")
+            self._with_retry(
+                lambda b=batch: self._commit_batch(
+                    st["insert"], b, connection=st["connection"]
+                ),
+                f"{what} (staging)",
+                reconnect=False,
+            )
             st["count"] += len(batch)
             self._rows_since_beat += len(batch)
             self._beat(f"{what} (staging)")
@@ -403,6 +445,7 @@ class Loader:
         """
         st = self._stage
         stage, target, columns = st["table"], st["target"], st["columns"]
+        connection = st["connection"]
         total = st["count"]
         try:
             if total:
@@ -421,7 +464,13 @@ class Loader:
                 step = max(self.batch_size, 1)
                 for lo in range(1, total + 1, step):
                     hi = lo + step - 1
-                    self._with_retry(lambda a=lo, b=hi: self._run(merge, {"lo": a, "hi": b}), what)
+                    self._with_retry(
+                        lambda a=lo, b=hi: self._commit_batch(
+                            merge, {"lo": a, "hi": b}, connection=connection
+                        ),
+                        what,
+                        reconnect=False,
+                    )
                     done = min(step, total - lo + 1)
                     self.rows_written[what] += done
                     self._rows_since_beat += done
@@ -429,16 +478,24 @@ class Loader:
             # Anything that needs the staged rows must run BEFORE the drop.
             for stmt in post_merge:
                 self._with_retry(
-                    lambda q=stmt: self._run(text(q.format(stage=stage))), f"{what} (post-merge)"
+                    lambda q=stmt: self._commit_batch(
+                        text(q.format(stage=stage)), {}, connection=connection
+                    ),
+                    f"{what} (post-merge)",
+                    reconnect=False,
                 )
         finally:
             # Never leave one behind: it is invisible to the app and would
             # quietly consume the buffer pool this path exists to protect.
             self._stage = None
             try:
-                self._run(text(f"DROP TABLE IF EXISTS {stage}"))
-            except OperationalError as exc:  # noqa: BLE001 — cleanup must not mask a real error
+                self._commit_batch(
+                    text(f"DROP TEMPORARY TABLE IF EXISTS {stage}"), {}, connection=connection
+                )
+            except Exception as exc:  # noqa: BLE001 — cleanup must not mask a real error
                 print(f"  ! could not drop {stage}: {exc}", file=sys.stderr)
+            finally:
+                connection.close()
 
     def upsert_stores(self, rows: list[dict]) -> None:
         self._executemany(
