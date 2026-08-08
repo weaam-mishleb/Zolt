@@ -374,3 +374,64 @@ def test_total_is_never_negative():
 def test_promotion_for_an_item_not_in_the_basket_is_ignored():
     r = price_basket([line(1, 1, 10)], [promo(kind="FIXED_PRICE", ids=(999,), discounted_price=1)], NOW)
     assert r["total_savings"] == 0.0
+
+
+# ── cheapest-wins: a per-unit price against a bundle ────────────────────────
+#
+# These pin a behaviour that has already been mistaken for a bug once.
+#
+# Production, פז-yellow אריאל: XL energy drink at ₪9.90 shelf price carries BOTH
+# a per-unit "אקסל ב5" (FIXED_PRICE, min_qty=1, ₪5.00) and a bundle "3ב17"
+# (BUNDLE_PRICE, min_qty=3, ₪17.00). Three units cost ₪15 under the per-unit deal
+# and ₪17 under the bundle, so the engine takes the per-unit one. That looked like
+# "the bundle is being divided by 3 and applied to a single unit", and the
+# proposed fix — force bundle modulo arithmetic — would have made the basket MORE
+# expensive than the shop actually charges.
+#
+# The rule being locked: whichever offer produces the lower total wins, and a
+# bundle never becomes mandatory just because it exists.
+def test_per_unit_price_beats_a_more_expensive_bundle():
+    per_unit = promo(pid=1, kind="FIXED_PRICE", discounted_price=5)      # ₪5 each
+    bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+    r = price_basket([line(1, 3, "9.90")], [per_unit, bundle], NOW)
+    # 3 × ₪5.00 = ₪15.00, not the ₪17.00 bundle
+    assert r["final_total"] == pytest.approx(15.0)
+    assert r["base_total"] == pytest.approx(29.70)
+    assert r["lines"][0]["applied_promotion"]["id"] == 1
+
+
+def test_bundle_beats_a_more_expensive_per_unit_price():
+    """The mirror image — the same rule has to pick the bundle when it is cheaper,
+    otherwise 'cheapest wins' is really 'per-unit always wins'."""
+    per_unit = promo(pid=1, kind="FIXED_PRICE", discounted_price=8)      # 3 × 8 = 24
+    bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+    r = price_basket([line(1, 3, "9.90")], [per_unit, bundle], NOW)
+    assert r["final_total"] == pytest.approx(17.0)
+    assert r["lines"][0]["applied_promotion"]["id"] == 2
+
+
+def test_a_single_unit_gets_the_per_unit_price_and_not_a_third_of_the_bundle():
+    """One unit, both offers present. ₪5.00 is the real per-unit deal; ₪17/3 =
+    ₪5.67 is not a price anyone offers and must never be charged."""
+    per_unit = promo(pid=1, kind="FIXED_PRICE", discounted_price=5)
+    bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+    r = price_basket([line(1, 1, "9.90")], [per_unit, bundle], NOW)
+    assert r["final_total"] == pytest.approx(5.0)
+    assert r["lines"][0]["applied_promotion"]["id"] == 1
+
+
+def test_one_unit_with_only_a_bundle_pays_full_price():
+    """Without a per-unit offer the single unit is simply not discounted — the
+    bundle is not prorated."""
+    bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+    r = price_basket([line(1, 1, "9.90")], [bundle], NOW)
+    assert r["final_total"] == pytest.approx(9.90)
+    assert r["total_savings"] == 0.0
+
+
+def test_bundle_remainder_stays_at_shelf_price():
+    """4 units against a 3-for bundle: one bundle plus one unit at ₪9.90.
+    This is the modulo arithmetic, stated as money rather than as an operator."""
+    bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+    r = price_basket([line(1, 4, "9.90")], [bundle], NOW)
+    assert r["final_total"] == pytest.approx(17.0 + 9.90)

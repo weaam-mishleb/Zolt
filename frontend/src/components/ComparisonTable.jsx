@@ -81,6 +81,23 @@ function UpsellTag({ promo }) {
   )
 }
 
+// The offer the engine turned DOWN on a line that did get a discount.
+//
+// Plain text, not a badge. There are already two badges competing on this row —
+// violet "you saved this" and amber "you could" — and this is neither. It is the
+// reasoning behind the price: a shopper who knows the branch advertises "3 ב-17"
+// can see that we compared it and charged the cheaper side. The backend only sends
+// it when the rival is genuinely not cheaper, so the claim is safe to make.
+function AlternativeNote({ promo }) {
+  const label = promoLabel(promo)
+  if (!label) return null
+  return (
+    <span className="text-[10px] font-medium leading-none text-slate-400">
+      יש גם {label} · יקר יותר
+    </span>
+  )
+}
+
 // One basket line's price, shared by both layouts so the promotion rules cannot
 // drift apart between them.
 function LinePrice({ it, align = 'center' }) {
@@ -459,6 +476,14 @@ function MobileComparison({ products, stores, winnerStoreId, qtyOf }) {
               {it?.available_promotion && (
                 <div className="mt-1.5 flex justify-end">
                   <UpsellTag promo={it.available_promotion} />
+                </div>
+              )}
+              {/* Mutually exclusive with the tag above by construction — the
+                  backend sets `available` only on undiscounted lines and
+                  `alternative` only on discounted ones — so these never stack. */}
+              {it?.alternative_promotion && (
+                <div className="mt-1 flex justify-end">
+                  <AlternativeNote promo={it.alternative_promotion} />
                 </div>
               )}
             </li>

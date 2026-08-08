@@ -112,6 +112,11 @@ class StoreItemPrice(BaseModel):
     # Set only when `applied_promotion` is None — the two are mutually exclusive,
     # so the UI never has to decide which of them to believe.
     available_promotion: AvailablePromotion | None = None
+    # The offer that LOST. Set only alongside `applied_promotion`: a shopper who
+    # knows the branch runs "3 ב-17" and sees us charge ₪5 a unit has no way to
+    # tell we compared them — this is that receipt. Only ever an offer that is
+    # genuinely not cheaper than what we charged.
+    alternative_promotion: AvailablePromotion | None = None
     found: bool
 
 

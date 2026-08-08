@@ -252,3 +252,75 @@ def test_degraded_result_still_ranks_and_caps():
     assert out["shown_store_count"] == 10
     assert out["store_count"] == 15
     assert out["winner_store_id"] == 15          # cheapest (100−15)
+
+
+# ── the runner-up ("יש גם 3 ב-17") ──────────────────────────────────────────
+from decimal import Decimal as _D  # noqa: E402
+
+from backend.app.services.promo_engine import Promotion as _Promo  # noqa: E402
+from backend.app.services.promotions import _attach_alternative, _unit_cost  # noqa: E402
+
+
+def _p(pid, kind, min_qty, price, ids=(7,)):
+    return _Promo(
+        id=pid, reward_kind=kind, canonical_ids=frozenset(ids), gift_canonical_ids=frozenset(),
+        min_qty=_D(str(min_qty)), max_qty=None, discounted_price=_D(str(price)),
+        discount_rate=None, discount_amount=None, min_basket_amount=None,
+        allow_stacking=False, description=f"{min_qty} ב-{price}", starts_at=None, ends_at=None,
+    )
+
+
+def _store(applied_id, charged, qty=1, unit_price="9.90"):
+    return {
+        "store_id": 1,
+        "items": [{
+            "product_id": 99, "quantity": qty, "unit_price": float(unit_price),
+            "line_total": charged, "found": True,
+            "applied_promotion": {"id": applied_id}, "available_promotion": None,
+            "alternative_promotion": None,
+        }],
+    }
+
+
+def test_unit_cost_divides_a_bundle_but_not_a_per_unit_price():
+    assert _unit_cost(_p(1, "FIXED_PRICE", 1, 5)) == _D("5")
+    assert _unit_cost(_p(2, "BUNDLE_PRICE", 3, 17)) == _D("17") / _D("3")
+    # kinds whose value depends on the shelf price or the basket are not quotable
+    # as "₪X a unit", so they must not become a runner-up claim
+    assert _unit_cost(_Promo(
+        id=3, reward_kind="PCT_OFF", canonical_ids=frozenset({7}), gift_canonical_ids=frozenset(),
+        min_qty=_D("1"), max_qty=None, discounted_price=None, discount_rate=_D("0.3"),
+        discount_amount=None, min_basket_amount=None, allow_stacking=False,
+        description=None, starts_at=None, ends_at=None,
+    )) is None
+
+
+def test_the_beaten_bundle_is_reported_as_the_runner_up():
+    """Production case: ₪5 a unit was charged, "3 ב-17" existed and lost."""
+    store = _store(applied_id=1, charged=5.0)
+    _attach_alternative(store, [_p(1, "FIXED_PRICE", 1, 5), _p(2, "BUNDLE_PRICE", 3, 17)], {99: 7})
+    alt = store["items"][0]["alternative_promotion"]
+    assert alt["id"] == 2 and alt["min_qty"] == 3.0 and alt["discounted_price"] == 17.0
+
+
+def test_a_cheaper_rival_is_never_advertised_as_the_runner_up():
+    """If something cheaper turns up here the engine would have taken it, so this
+    combination means something is wrong — stay silent rather than publish a
+    contradiction telling the shopper we charged more than we had to."""
+    store = _store(applied_id=1, charged=5.0)
+    _attach_alternative(store, [_p(1, "FIXED_PRICE", 1, 5), _p(2, "BUNDLE_PRICE", 3, 9)], {99: 7})
+    assert store["items"][0]["alternative_promotion"] is None
+
+
+def test_an_undiscounted_line_gets_no_runner_up():
+    """`available_promotion` covers those; the two must never both be populated."""
+    store = _store(applied_id=1, charged=9.90)
+    store["items"][0]["applied_promotion"] = None
+    _attach_alternative(store, [_p(2, "BUNDLE_PRICE", 3, 17)], {99: 7})
+    assert store["items"][0]["alternative_promotion"] is None
+
+
+def test_the_applied_promotion_is_not_reported_against_itself():
+    store = _store(applied_id=2, charged=17.0, qty=3)
+    _attach_alternative(store, [_p(2, "BUNDLE_PRICE", 3, 17)], {99: 7})
+    assert store["items"][0]["alternative_promotion"] is None

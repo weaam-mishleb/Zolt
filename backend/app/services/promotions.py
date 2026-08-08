@@ -175,6 +175,7 @@ def _ensure_promo_fields(stores: list[dict]) -> None:
             item.setdefault("original_line_total", item.get("line_total"))
             item.setdefault("applied_promotion", None)
             item.setdefault("available_promotion", None)
+            item.setdefault("alternative_promotion", None)
 
 
 def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
@@ -213,6 +214,71 @@ def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
     return False
 
 
+def _promo_payload(promo: Promotion, units_needed: float | None = None) -> dict:
+    """The wire shape for a promotion that was NOT applied (available or runner-up)."""
+    dec = lambda v: float(v) if v is not None else None   # noqa: E731
+    return {
+        "id": promo.id,
+        "reward_kind": promo.reward_kind,
+        "description": promo.description,
+        "min_qty": float(promo.min_qty),
+        "discounted_price": dec(promo.discounted_price),
+        "discount_rate": dec(promo.discount_rate),
+        "discount_amount": dec(promo.discount_amount),
+        "min_basket_amount": dec(promo.min_basket_amount),
+        "units_needed": units_needed,
+    }
+
+
+def _unit_cost(promo: Promotion) -> Decimal | None:
+    """What one unit costs under this offer, or None when that is not a number.
+
+    Only FIXED_PRICE and BUNDLE_PRICE state a price outright. PCT_OFF, NTH_FREE
+    and AMOUNT_OFF depend on the shelf price or the whole basket, so quoting them
+    as "₪X a unit" beside a rival offer would be a comparison we cannot stand
+    behind.
+    """
+    if promo.discounted_price is None:
+        return None
+    if promo.reward_kind == "FIXED_PRICE":
+        return promo.discounted_price
+    if promo.reward_kind == "BUNDLE_PRICE" and promo.min_qty >= 1:
+        return promo.discounted_price / promo.min_qty
+    return None
+
+
+def _attach_alternative(store: dict, promos: list[Promotion], canon_of: dict[int, int]) -> None:
+    """Record the best offer the engine turned DOWN, per discounted line.
+
+    Transparency, not an upsell: the shopper sees which rival offer existed and
+    that it was the dearer one. Guarded so it can only ever show something that is
+    genuinely no cheaper than what we charged — if a cheaper offer showed up here
+    the engine would have taken it, so that combination means something is wrong
+    and staying silent beats publishing a contradiction.
+    """
+    by_canonical: dict[int, list[Promotion]] = {}
+    for promo in promos:
+        for cid in promo.canonical_ids:
+            by_canonical.setdefault(cid, []).append(promo)
+
+    for item in store["items"]:
+        applied = item.get("applied_promotion")
+        if not applied or not item.get("found") or not item.get("quantity"):
+            continue
+        charged = Decimal(str(item["line_total"])) / Decimal(str(item["quantity"]))
+        rivals = [
+            (cost, p)
+            for p in by_canonical.get(canon_of.get(item["product_id"]), [])
+            if p.id != applied.get("id")
+            and (cost := _unit_cost(p)) is not None
+            and cost >= charged                       # never advertise a better deal
+            and _worth_advertising(p, Decimal(str(item["unit_price"])))
+        ]
+        if not rivals:
+            continue
+        item["alternative_promotion"] = _promo_payload(min(rivals, key=lambda r: r[0])[1])
+
+
 def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, int]) -> None:
     """Surface a promotion the shopper has not unlocked yet, per line.
 
@@ -240,17 +306,7 @@ def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, 
         if promo is None:
             continue
         short = float(promo.min_qty) - float(item["quantity"])
-        item["available_promotion"] = {
-            "id": promo.id,
-            "reward_kind": promo.reward_kind,
-            "description": promo.description,
-            "min_qty": float(promo.min_qty),
-            "discounted_price": float(promo.discounted_price) if promo.discounted_price is not None else None,
-            "discount_rate": float(promo.discount_rate) if promo.discount_rate is not None else None,
-            "discount_amount": float(promo.discount_amount) if promo.discount_amount is not None else None,
-            "min_basket_amount": float(promo.min_basket_amount) if promo.min_basket_amount is not None else None,
-            "units_needed": short if short > 0 else None,
-        }
+        item["available_promotion"] = _promo_payload(promo, short if short > 0 else None)
 
 
 def _rerank(result: dict, limit: int | None) -> None:
@@ -329,9 +385,11 @@ def apply_promotions(
         promos = promos_by_store.get(store["store_id"])
         if promos:
             _reprice_store(store, promos, canon_of, now)
-            # After repricing, so it can see which lines actually got a discount
-            # and leave those alone.
+            # Both run after repricing, so they can see which lines actually got a
+            # discount. They are complements: `available` speaks to lines with no
+            # discount, `alternative` to lines that got one.
             _attach_available(store, promos, canon_of)
+            _attach_alternative(store, promos, canon_of)
 
     _rerank(result, limit)
     result["promotions_applied"] = any(s.get("total_savings", 0) > 0 for s in stores)
