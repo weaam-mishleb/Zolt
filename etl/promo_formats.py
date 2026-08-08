@@ -239,7 +239,11 @@ def classify_reward(header: dict) -> str:
         return "NTH_FREE"
     if price is not None and price > 0:
         return "BUNDLE_PRICE" if min_qty >= 2 else "FIXED_PRICE"
-    if rate is not None and rate > 0:
+    # A literal 100% GROUPS row is usually the free component of a coupon,
+    # employee benefit or multi-group meal deal. We cannot apply it until the
+    # feed's cross-group prerequisites are modeled, so preserve the raw fields
+    # but classify the rule as UNKNOWN rather than inventing a free basket.
+    if rate is not None and 0 < rate < 1:
         return "PCT_OFF"
     if basket_min is not None and basket_min > 0:
         return "AMOUNT_OFF"

@@ -11,7 +11,12 @@ from decimal import Decimal
 from sqlalchemy.exc import OperationalError
 
 from backend.app.services.promo_engine import Promotion
-from backend.app.services.promotions import _attach_available, _rerank, apply_promotions
+from backend.app.services.promotions import (
+    _SELECT_ACTIVE,
+    _attach_available,
+    _rerank,
+    apply_promotions,
+)
 
 
 def store(sid, total, *, complete=True, missing=0, chain="שופרסל"):
@@ -150,6 +155,36 @@ def test_available_promotion_rejects_bad_deal_before_selecting_threshold():
 
     assert line["available_promotion"]["id"] == 2
     assert line["available_promotion"]["units_needed"] == 2.0
+
+
+def test_available_promotion_never_advertises_a_100_percent_coupon():
+    line = {
+        "product_id": 7,
+        "found": True,
+        "quantity": 1,
+        "unit_price": 9.90,
+        "applied_promotion": None,
+        "available_promotion": None,
+    }
+    coupon = Promotion(
+        id=1,
+        reward_kind="PCT_OFF",
+        canonical_ids=frozenset({42}),
+        discount_rate=Decimal("1"),
+        description="restricted coupon",
+    )
+
+    _attach_available({"items": [line]}, [coupon], {7: 42})
+
+    assert line["available_promotion"] is None
+
+
+def test_active_query_excludes_club_and_unmodelled_free_promotions():
+    sql = " ".join(str(_SELECT_ACTIVE).split())
+    assert "p.club_id IS NULL" in sql
+    assert "0 - כלל הלקוחות" in sql
+    assert "p.discount_rate < 1" in sql
+    assert "p.discounted_price > 0" in sql
 
 
 def test_empty_store_list_is_handled():

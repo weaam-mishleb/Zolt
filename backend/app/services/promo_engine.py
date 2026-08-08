@@ -151,7 +151,7 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
     kind = promo.reward_kind
 
     if kind == "FIXED_PRICE":
-        if promo.discounted_price is None:
+        if promo.discounted_price is None or promo.discounted_price <= 0:
             return None
         for ln, qty in units:
             per_unit = ln.unit_price - promo.discounted_price
@@ -161,14 +161,22 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
             consumed[ln.canonical_id] = consumed.get(ln.canonical_id, _ZERO) + qty
 
     elif kind == "PCT_OFF":
-        if not promo.discount_rate or promo.discount_rate <= 0:
+        # 100% rows in the feed are not public price cuts. Measured on Yellow,
+        # every one is a coupon, employee benefit, free gift or one component
+        # of a multi-group meal deal. The engine cannot prove those external
+        # conditions, so accepting >=100% fabricates free baskets.
+        if not promo.discount_rate or not 0 < promo.discount_rate < 1:
             return None
         for ln, qty in units:
             savings += ln.unit_price * qty * promo.discount_rate
             consumed[ln.canonical_id] = consumed.get(ln.canonical_id, _ZERO) + qty
 
     elif kind == "BUNDLE_PRICE":
-        if promo.discounted_price is None or promo.min_qty < 1:
+        if (
+            promo.discounted_price is None
+            or promo.discounted_price <= 0
+            or promo.min_qty < 1
+        ):
             return None
         # Pool units across every covered line, then form whole bundles.
         pool = [(ln, q) for ln, q in units]
@@ -189,7 +197,8 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
 
     elif kind == "NTH_FREE":
         # Buy `min_qty` of the trigger items, get one unit free.
-        if promo.min_qty < 1:
+        gift_ids = promo.gift_canonical_ids - promo.canonical_ids
+        if promo.min_qty < (1 if gift_ids else 2):
             return None
         sets = int(sum(q for _, q in units) // promo.min_qty)
         if sets < 1:
@@ -198,7 +207,6 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
         # A gift may be a DIFFERENT product ('קנה X קבל Y'). When it is, the
         # free unit must come from the gift lines — and if the shopper did not
         # put the gift in the basket there is no saving to claim, only an offer.
-        gift_ids = promo.gift_canonical_ids - promo.canonical_ids
         if gift_ids:
             free_pool = [
                 (ln, ln.quantity) for ln in lines if ln.canonical_id in gift_ids

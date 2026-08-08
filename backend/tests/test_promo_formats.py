@@ -221,6 +221,7 @@ def test_flat_family_without_itemcode_yields_no_items():
         ({"discounted_price": 9.9, "min_qty": 1}, "FIXED_PRICE"),
         ({"discounted_price": 9.9}, "FIXED_PRICE"),          # min_qty absent → 1
         ({"discount_rate": 0.3}, "PCT_OFF"),
+        ({"discounted_price": 0, "discount_rate": 1}, "UNKNOWN"),
         ({"min_basket_amount": 100}, "AMOUNT_OFF"),
         ({}, "UNKNOWN"),
         ({"discounted_price": 0, "discount_rate": 0}, "UNKNOWN"),

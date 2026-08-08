@@ -106,6 +106,28 @@ def test_percent_off():
     assert r["final_total"] == 14.0
 
 
+def test_literal_100_percent_coupon_cannot_create_a_free_cart():
+    """Yellow publishes conditional Elbit bundle components as 100% line discounts."""
+    lines = [line(1, 1, 9.90, "XL"), line(2, 1, 9.90, "במבה")]
+    promos = [
+        promo(pid=1, kind="PCT_OFF", ids=(1,), discount_rate=D("1.00")),
+        promo(pid=2, kind="PCT_OFF", ids=(2,), discount_rate=D("1.00")),
+    ]
+
+    r = price_basket(lines, promos, NOW)
+
+    assert r["base_total"] == 19.80
+    assert r["final_total"] == 19.80
+    assert r["total_savings"] == 0.0
+    assert r["applied_promotions"] == []
+
+
+@pytest.mark.parametrize("kind", ["FIXED_PRICE", "BUNDLE_PRICE"])
+def test_zero_price_rule_is_not_treated_as_an_unconditional_giveaway(kind):
+    p = promo(kind=kind, min_qty=1, discounted_price=0)
+    assert price_basket([line(1, 1, 10)], [p], NOW)["final_total"] == 10.0
+
+
 # ── AMOUNT_OFF — basket-level threshold ─────────────────────────────────────
 def test_amount_off_applies_when_the_threshold_is_met():
     p = promo(kind="AMOUNT_OFF", discount_amount=20, min_basket_amount=100)
@@ -144,6 +166,23 @@ def test_nth_free_makes_the_cheapest_unit_free():
 def test_nth_free_needs_a_full_set():
     r = price_basket([line(1, 1, 10)], [promo(kind="NTH_FREE", min_qty=2)], NOW)
     assert r["total_savings"] == 0.0
+
+
+def test_same_item_nth_free_with_threshold_one_is_rejected():
+    p = promo(kind="NTH_FREE", min_qty=1)
+    assert price_basket([line(1, 1, 10)], [p], NOW)["final_total"] == 10.0
+
+
+def test_buy_one_trigger_get_different_gift_still_allows_threshold_one():
+    p = Promotion(
+        id=1,
+        reward_kind="NTH_FREE",
+        canonical_ids=frozenset({1}),
+        gift_canonical_ids=frozenset({2}),
+        min_qty=D("1"),
+    )
+    r = price_basket([line(1, 1, 20), line(2, 1, 5)], [p], NOW)
+    assert r["final_total"] == 20.0
 
 
 # ── max_qty cap ('מוגבל ל-3') ───────────────────────────────────────────────

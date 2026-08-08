@@ -39,6 +39,17 @@ _SELECT_ACTIVE = text(
       AND pi.canonical_id IN :canon
       AND (p.starts_at IS NULL OR p.starts_at <= :now)
       AND (p.ends_at   IS NULL OR p.ends_at   >= :now)
+      -- The comparison has no club/coupon identity. Applying a restricted
+      -- price as though every shopper receives it is worse than omitting it.
+      AND (p.club_id IS NULL
+           OR TRIM(p.club_id) IN ('', '0', '0 - כלל הלקוחות'))
+      -- A literal free line in the GROUPS feed is commonly one component of a
+      -- coupon/employee/meal entitlement. Until we model its other required
+      -- groups, it must not enter either basket pricing or the upsell badge.
+      AND (p.reward_kind <> 'PCT_OFF'
+           OR p.discount_rate IS NULL OR p.discount_rate < 1)
+      AND (p.reward_kind NOT IN ('FIXED_PRICE', 'BUNDLE_PRICE')
+           OR p.discounted_price IS NULL OR p.discounted_price > 0)
     """
 ).bindparams(bindparam("stores", expanding=True), bindparam("canon", expanding=True))
 
@@ -178,17 +189,25 @@ def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
     """
     kind = promo.reward_kind
     if kind == "FIXED_PRICE":
-        return promo.discounted_price is not None and promo.discounted_price < unit_price
+        return (
+            promo.discounted_price is not None
+            and 0 < promo.discounted_price < unit_price
+        )
     if kind == "BUNDLE_PRICE":
         return (
             promo.discounted_price is not None
+            and promo.discounted_price > 0
             and promo.min_qty >= 1
             and promo.discounted_price < unit_price * promo.min_qty
         )
     if kind == "PCT_OFF":
-        return bool(promo.discount_rate and promo.discount_rate > 0)
+        return bool(promo.discount_rate and 0 < promo.discount_rate < 1)
     if kind == "NTH_FREE":
-        return promo.min_qty >= 1
+        # Buy-one-X-get-Y may legitimately have min_qty=1. A same-item
+        # NTH_FREE with min_qty=1 means every unit is free and is another feed
+        # encoding of an unmodelled entitlement.
+        has_separate_gift = bool(promo.gift_canonical_ids - promo.canonical_ids)
+        return promo.min_qty >= (1 if has_separate_gift else 2)
     # AMOUNT_OFF is basket-level — it is not about this product, so a badge on
     # this line would be misleading. UNKNOWN has no numbers to reason about.
     return False
