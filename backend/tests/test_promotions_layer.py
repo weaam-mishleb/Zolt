@@ -386,3 +386,26 @@ def test_a_conditional_promotion_is_never_advertised_either():
     # the same numbers without the conditional wording are fine
     honest = dataclasses.replace(cross_sale, description="אקסל ב5")
     assert _worth_advertising(honest, _D("9.90")) is True
+
+
+@pytest.mark.parametrize(
+    "description, rejected",
+    [
+        ("/ במבה 80ג ב3AR", True),        # the production string
+        ("ב5AR", True),
+        ("AR", True),
+        ("מבצע AR מיוחד", True),
+        # "AR" inside a Latin word is NOT the marker — these must survive, or the
+        # filter quietly deletes whole brands.
+        ("CARLSBERG 500 מל", False),
+        ("ארטיק MARS", False),
+        ("SPARKLING WATER", False),
+        ("במבה 80 גרם 3ב20", False),
+        # 'ארוחה' is deliberately NOT blacklisted: measured against production it
+        # matches 26 active descriptions and every one is a PRODUCT name
+        # ("ארוחה נודלס 110-120גרם 2ב20" — instant noodles), never a meal deal.
+        ("ארוחה נודלס 110-120גרם 2ב20", False),
+    ],
+)
+def test_the_AR_meal_deal_marker_is_latin_letter_bounded(description, rejected):
+    assert is_conditional(description) is rejected

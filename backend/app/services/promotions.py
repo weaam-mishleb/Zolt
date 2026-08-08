@@ -12,6 +12,7 @@ is frequently not the cheapest after them.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -19,7 +20,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from .promo_engine import BasketLine, Promotion, price_basket
+from .promo_engine import _MIN_SINGLE_UNIT_RATIO, BasketLine, Promotion, price_basket
 
 log = logging.getLogger("zolt.promotions")
 
@@ -85,6 +86,14 @@ _CONDITIONAL_MARKERS = (
 )
 
 
+# Paz-Yellow's internal marker for an ארוחה (meal deal), which arrives glued to
+# the price: '/ במבה 80ג ב3AR'. A plain substring test is unusable — "AR" sits
+# inside CARLSBERG, ARTIK, MARS — so it must be Latin-letter-bounded. Note \bAR\b
+# does NOT work: in 'ב3AR' the character before A is a digit, which is a word
+# character, so there is no word boundary there at all.
+_AR_MARKER = re.compile(r"(?<![A-Za-z])AR(?![A-Za-z])")
+
+
 def is_conditional(description) -> bool:
     """True when the description says the offer depends on something we cannot see.
 
@@ -94,7 +103,9 @@ def is_conditional(description) -> bool:
     price we quoted and cannot honour.
     """
     text_ = description or ""
-    return any(marker in text_ for marker in _CONDITIONAL_MARKERS)
+    if any(marker in text_ for marker in _CONDITIONAL_MARKERS):
+        return True
+    return bool(_AR_MARKER.search(text_))
 
 
 def canonical_ids_for(db: Session, product_ids: list[int]) -> dict[int, int]:
@@ -243,9 +254,13 @@ def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
         return False
     kind = promo.reward_kind
     if kind == "FIXED_PRICE":
+        # Same floor the engine prices by, so the badge can never advertise an
+        # offer the engine would refuse to charge.
         return (
             promo.discounted_price is not None
             and 0 < promo.discounted_price < unit_price
+            and not (promo.min_qty <= 1
+                     and promo.discounted_price < unit_price * _MIN_SINGLE_UNIT_RATIO)
         )
     if kind == "BUNDLE_PRICE":
         return (

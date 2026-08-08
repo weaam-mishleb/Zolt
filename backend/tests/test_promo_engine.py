@@ -470,3 +470,40 @@ def test_a_conditional_cross_sale_reaching_the_engine_would_change_the_price():
     cross_sale = promo(pid=1, kind="FIXED_PRICE", discounted_price=5)
     r = price_basket([line(1, 1, _XL_SHELF)], [cross_sale, _XL_BUNDLE], NOW)
     assert r["final_total"] == pytest.approx(5.0)   # the price we must never quote
+
+
+# ── single-unit discount floor ──────────────────────────────────────────────
+#
+# '/ במבה 80ג ב3AR' — ₪3.00 against a ₪9.90 shelf price, 70% off one snack at a
+# filling station. No conditional keyword, so the text filter let it through; the
+# depth of the cut is the only remaining signal that a condition exists.
+@pytest.mark.parametrize(
+    "shelf, promo_price, expected_total",
+    [
+        ("9.90", 3.00, 9.90),    # 70% off one unit — rejected, shelf price stands
+        ("9.90", 3.95, 9.90),    # just past the 60% line
+        ("9.90", 3.97, 3.97),    # just inside it — a real cut still applies
+        ("9.90", 6.00, 6.00),    # 39% off — an ordinary promotion
+        ("10.00", 4.00, 4.00),   # exactly at the floor is allowed
+    ],
+)
+def test_single_unit_price_cut_deeper_than_60_percent_is_refused(shelf, promo_price, expected_total):
+    p = promo(kind="FIXED_PRICE", min_qty=1, discounted_price=promo_price)
+    r = price_basket([line(1, 1, shelf)], [p], NOW)
+    assert r["final_total"] == pytest.approx(expected_total)
+
+
+def test_the_floor_does_not_touch_bundles():
+    """A bundle states its own condition, so "3 ב-9" off a ₪9.90 shelf price — 70%
+    per unit — is legitimate and must still apply."""
+    p = promo(kind="BUNDLE_PRICE", min_qty=3, discounted_price=9)
+    r = price_basket([line(1, 3, "9.90")], [p], NOW)
+    assert r["final_total"] == pytest.approx(9.0)
+
+
+def test_the_floor_scales_with_the_branch_price():
+    """Not an absolute shekel threshold — the same promo price is refused where the
+    shelf price is high and accepted where it is low."""
+    p = promo(kind="FIXED_PRICE", min_qty=1, discounted_price=3)
+    assert price_basket([line(1, 1, "20.00")], [p], NOW)["final_total"] == pytest.approx(20.0)
+    assert price_basket([line(1, 1, "7.00")], [p], NOW)["final_total"] == pytest.approx(3.0)

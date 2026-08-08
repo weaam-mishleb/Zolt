@@ -35,6 +35,12 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 _ZERO = Decimal("0")
+
+# Floor for a SINGLE-UNIT FIXED_PRICE offer, as a fraction of the shelf price.
+# 0.40 => anything more than 60% off one unit is treated as an unencoded
+# condition rather than a price cut. Bundles (min_qty >= 2) are exempt: they state
+# their own condition, so a steep per-unit drop there is legitimate.
+_MIN_SINGLE_UNIT_RATIO = Decimal("0.40")
 _CENT = Decimal("0.01")
 
 
@@ -156,6 +162,15 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
         for ln, qty in units:
             per_unit = ln.unit_price - promo.discounted_price
             if per_unit <= 0:            # promo is not actually cheaper — ignore it
+                continue
+            # A single-unit price cut this deep is almost never unconditional. The
+            # case that forced this: '/ במבה 80ג ב3AR' — ₪3.00 against a ₪9.90
+            # shelf price, 70% off one snack at a filling station. Real single-unit
+            # loss leaders exist but sit nearer 30-50%; past this line the feed is
+            # nearly always describing a bundle or meal deal whose condition it
+            # never encoded. Bundles are exempt: min_qty >= 2 states its own
+            # condition, and "3 for 17" is allowed to be a steep per-unit drop.
+            if promo.min_qty <= 1 and promo.discounted_price < ln.unit_price * _MIN_SINGLE_UNIT_RATIO:
                 continue
             savings += per_unit * qty
             consumed[ln.canonical_id] = consumed.get(ln.canonical_id, _ZERO) + qty
