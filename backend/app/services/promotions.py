@@ -94,6 +94,34 @@ _CONDITIONAL_MARKERS = (
 _AR_MARKER = re.compile(r"(?<![A-Za-z])AR(?![A-Za-z])")
 
 
+# Chains the single-unit discount floor governs — forecourt/convenience only.
+#
+# Keyed on chain_id, which is an assigned barcode prefix and does not drift; the
+# chain NAME is free text a supplier types. Same reasoning as the display-name
+# overrides in etl/config.py.
+#
+# Supermarkets are deliberately EXEMPT. They run genuine loss leaders deeper than
+# 60% — 'קטיף 3.90 ברוקולי ארוז במגשית' is ₪3.90 against a ₪11.90 shelf price on
+# 158 branches — and enforcing the floor on them refused ~10,354 real promotions,
+# 5,645 of those Shufersal alone. A forecourt shop discounting one snack by 70%
+# is nearly always describing a meal deal it never encoded; a supermarket doing it
+# is running a loss leader to get you through the door. Same arithmetic, opposite
+# meaning, so the rule follows the retail format rather than the number.
+#
+# Adding a chain is one line. Wolt Market and City Market were considered and left
+# out: they are delivery and urban grocery, and neither shows the meal-deal pattern
+# that motivated this.
+_CONVENIENCE_CHAIN_IDS = frozenset({
+    "7290644700005",   # פז-yellow
+    "7290492000005",   # דור אלון
+})
+
+
+def enforces_single_unit_floor(chain_id) -> bool:
+    """True where a >60% single-unit cut should be read as an unencoded condition."""
+    return str(chain_id or "") in _CONVENIENCE_CHAIN_IDS
+
+
 def is_conditional(description) -> bool:
     """True when the description says the offer depends on something we cannot see.
 
@@ -196,7 +224,10 @@ def _reprice_store(store: dict, promos: list[Promotion], canon_of: dict[int, int
     if not lines:
         return
 
-    priced = price_basket(lines, promos, now)
+    priced = price_basket(
+        lines, promos, now,
+        single_unit_floor=enforces_single_unit_floor(store.get("chain_id")),
+    )
     if priced["total_savings"] <= 0:
         return
 
@@ -236,7 +267,9 @@ def _ensure_promo_fields(stores: list[dict]) -> None:
             item.setdefault("alternative_promotion", None)
 
 
-def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
+def _worth_advertising(
+    promo: Promotion, unit_price: Decimal, *, single_unit_floor: bool = True
+) -> bool:
     """Would this promotion actually make the line CHEAPER?
 
     The guard is the whole reason this is not a one-liner. A FIXED_PRICE or
@@ -259,7 +292,8 @@ def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
         return (
             promo.discounted_price is not None
             and 0 < promo.discounted_price < unit_price
-            and not (promo.min_qty <= 1
+            and not (single_unit_floor
+                     and promo.min_qty <= 1
                      and promo.discounted_price < unit_price * _MIN_SINGLE_UNIT_RATIO)
         )
     if kind == "BUNDLE_PRICE":
@@ -324,6 +358,9 @@ def _attach_alternative(store: dict, promos: list[Promotion], canon_of: dict[int
     the engine would have taken it, so that combination means something is wrong
     and staying silent beats publishing a contradiction.
     """
+    # The badge must never advertise what the engine would refuse to charge at
+    # THIS store, so it reads the same per-chain setting the repricing used.
+    floor = enforces_single_unit_floor(store.get("chain_id"))
     by_canonical: dict[int, list[Promotion]] = {}
     for promo in promos:
         for cid in promo.canonical_ids:
@@ -340,7 +377,7 @@ def _attach_alternative(store: dict, promos: list[Promotion], canon_of: dict[int
             if p.id != applied.get("id")
             and (cost := _unit_cost(p)) is not None
             and cost >= charged                       # never advertise a better deal
-            and _worth_advertising(p, Decimal(str(item["unit_price"])))
+            and _worth_advertising(p, Decimal(str(item["unit_price"])), single_unit_floor=floor)
         ]
         if not rivals:
             continue
@@ -353,6 +390,9 @@ def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, 
     Only ever set where `applied_promotion` is None, so the two cannot both be
     populated and the UI never has to choose between them.
     """
+    # The badge must never advertise what the engine would refuse to charge at
+    # THIS store, so it reads the same per-chain setting the repricing used.
+    floor = enforces_single_unit_floor(store.get("chain_id"))
     by_canonical: dict[int, list[Promotion]] = {}
     for promo in promos:
         for cid in promo.canonical_ids:
@@ -367,7 +407,11 @@ def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, 
         # qty=1 meal deal above shelf price shadows a real qty=3 bundle merely
         # because its threshold sorts first.
         promo = min(
-            (candidate for candidate in candidates if _worth_advertising(candidate, unit_price)),
+            (
+                candidate
+                for candidate in candidates
+                if _worth_advertising(candidate, unit_price, single_unit_floor=floor)
+            ),
             key=lambda candidate: (candidate.min_qty, candidate.id),
             default=None,
         )

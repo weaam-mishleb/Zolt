@@ -334,6 +334,8 @@ def test_the_applied_promotion_is_not_reported_against_itself():
 # for a single can is a price the register will not honour.
 import dataclasses  # noqa: E402
 
+from datetime import datetime  # noqa: E402
+
 import pytest  # noqa: E402
 
 from backend.app.services.promotions import is_conditional  # noqa: E402
@@ -409,3 +411,65 @@ def test_a_conditional_promotion_is_never_advertised_either():
 )
 def test_the_AR_meal_deal_marker_is_latin_letter_bounded(description, rejected):
     assert is_conditional(description) is rejected
+
+
+# ── the single-unit floor is convenience-store only ─────────────────────────
+#
+# Same arithmetic, opposite meaning by retail format: a forecourt shop cutting one
+# snack 70% is nearly always describing a meal deal it never encoded, while a
+# supermarket doing it is running a loss leader to pull you through the door.
+# Enforcing it everywhere refused ~10,354 real promotions, 5,645 of them Shufersal.
+@pytest.mark.parametrize(
+    "chain_id, chain, enforced",
+    [
+        ("7290644700005", "פז-yellow", True),
+        ("7290492000005", "דור אלון", True),
+        ("7290027600007", "שופרסל", False),
+        ("7290058140886", "רמי לוי", False),
+        ("7290055700007", "קרפור", False),
+        (None, "unknown chain", False),
+        ("", "empty", False),
+    ],
+)
+def test_only_convenience_chains_enforce_the_single_unit_floor(chain_id, chain, enforced):
+    from backend.app.services.promotions import enforces_single_unit_floor
+
+    assert enforces_single_unit_floor(chain_id) is enforced, chain
+
+
+@pytest.mark.parametrize(
+    "single_unit_floor, expected",
+    [
+        (True, 9.90),    # forecourt: the ₪3.00 cut is refused, shelf price stands
+        (False, 3.00),   # supermarket: the same cut is a legitimate loss leader
+    ],
+)
+def test_the_same_promotion_prices_differently_by_retail_format(single_unit_floor, expected):
+    from backend.app.services.promo_engine import BasketLine, price_basket
+
+    bamba = _Promo(
+        id=1, reward_kind="FIXED_PRICE", canonical_ids=frozenset({7}),
+        gift_canonical_ids=frozenset(), min_qty=_D("1"), max_qty=None,
+        discounted_price=_D("3.00"), discount_rate=None, discount_amount=None,
+        min_basket_amount=None, allow_stacking=False,
+        description="במבה 80ג ב3", starts_at=None, ends_at=None,
+    )
+    line = BasketLine(canonical_id=7, quantity=_D("1"), unit_price=_D("9.90"))
+    r = price_basket([line], [bamba], datetime(2026, 6, 15), single_unit_floor=single_unit_floor)
+    assert r["final_total"] == pytest.approx(expected)
+
+
+def test_bundles_are_exempt_from_the_floor_at_a_convenience_store_too():
+    """A bundle states its own condition, so the format scoping must not change it."""
+    from backend.app.services.promo_engine import BasketLine, price_basket
+
+    bundle = _Promo(
+        id=2, reward_kind="BUNDLE_PRICE", canonical_ids=frozenset({7}),
+        gift_canonical_ids=frozenset(), min_qty=_D("3"), max_qty=None,
+        discounted_price=_D("9.00"), discount_rate=None, discount_amount=None,
+        min_basket_amount=None, allow_stacking=False,
+        description="3 ב-9", starts_at=None, ends_at=None,
+    )
+    lines = [BasketLine(canonical_id=7, quantity=_D("3"), unit_price=_D("9.90"))]
+    r = price_basket(lines, [bundle], datetime(2026, 6, 15), single_unit_floor=True)
+    assert r["final_total"] == pytest.approx(9.0)

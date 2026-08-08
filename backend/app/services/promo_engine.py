@@ -40,6 +40,12 @@ _ZERO = Decimal("0")
 # 0.40 => anything more than 60% off one unit is treated as an unencoded
 # condition rather than a price cut. Bundles (min_qty >= 2) are exempt: they state
 # their own condition, so a steep per-unit drop there is legitimate.
+#
+# Applied only where the CALLER asks for it. Supermarkets run genuine loss leaders
+# this deep — 'קטיף 3.90 ברוקולי ארוז במגשית' is ₪3.90 against a ₪11.90 shelf price
+# across 158 branches — so enforcing it everywhere refused ~10,354 real promotions,
+# 5,645 of them Shufersal. Which chains it governs is a retail judgement, not
+# arithmetic, so it lives with the DB bridge (see _CONVENIENCE_CHAIN_IDS).
 _MIN_SINGLE_UNIT_RATIO = Decimal("0.40")
 _CENT = Decimal("0.01")
 
@@ -128,7 +134,13 @@ def _eligible_units(promo: Promotion, lines: list[BasketLine]) -> list[tuple[Bas
     return out
 
 
-def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) -> _Candidate | None:
+def _evaluate(
+    promo: Promotion,
+    lines: list[BasketLine],
+    basket_total: Decimal,
+    *,
+    single_unit_floor: bool = True,
+) -> _Candidate | None:
     """Compute what this promotion is worth against this basket, or None.
 
     `min_basket_amount` is deliberately tested against the PRE-discount total —
@@ -170,7 +182,11 @@ def _evaluate(promo: Promotion, lines: list[BasketLine], basket_total: Decimal) 
             # nearly always describing a bundle or meal deal whose condition it
             # never encoded. Bundles are exempt: min_qty >= 2 states its own
             # condition, and "3 for 17" is allowed to be a steep per-unit drop.
-            if promo.min_qty <= 1 and promo.discounted_price < ln.unit_price * _MIN_SINGLE_UNIT_RATIO:
+            if (
+                single_unit_floor
+                and promo.min_qty <= 1
+                and promo.discounted_price < ln.unit_price * _MIN_SINGLE_UNIT_RATIO
+            ):
                 continue
             savings += per_unit * qty
             consumed[ln.canonical_id] = consumed.get(ln.canonical_id, _ZERO) + qty
@@ -349,6 +365,8 @@ def price_basket(
     lines: list[BasketLine],
     promotions: list[Promotion],
     now: datetime,
+    *,
+    single_unit_floor: bool = True,
 ) -> dict:
     """Price a basket at one store, applying the best compatible promotions.
 
@@ -358,7 +376,11 @@ def price_basket(
     base_total = _money(sum((ln.line_total for ln in lines), _ZERO))
 
     active = [p for p in promotions if p.is_active(now)]
-    candidates = [c for p in active if (c := _evaluate(p, lines, base_total))]
+    candidates = [
+        c
+        for p in active
+        if (c := _evaluate(p, lines, base_total, single_unit_floor=single_unit_floor))
+    ]
     applied = _resolve_conflicts(candidates)
 
     # Attribute each promotion's saving back to the lines it consumed, so the UI
