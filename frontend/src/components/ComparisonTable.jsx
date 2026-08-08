@@ -2,7 +2,6 @@ import { useState } from 'react'
 import ProductImage from './ProductImage.jsx'
 import PromotionBadge, { promoLabel } from './promotions/PromotionBadge.jsx'
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
-import { useProductImages } from '../hooks/useProductImages.js'
 
 const ils = new Intl.NumberFormat('he-IL', {
   style: 'currency',
@@ -212,7 +211,6 @@ const stickyHead = `${STICKY} ${PRODUCT_COL} top-0 z-40 bg-slate-50 py-2.5 text-
 const stickyBody = `${STICKY} ${PRODUCT_COL} z-30 bg-slate-50 py-2 text-right transition-colors duration-200 group-hover:bg-slate-100`
 
 function ComparisonMatrix({ products, stores, winnerStoreId, qtyOf }) {
-  const images = useProductImages(products)
   const maps = Object.fromEntries(stores.map((s) => [s.store_id, itemsByProduct(s)]))
 
   return (
@@ -302,7 +300,12 @@ function ComparisonMatrix({ products, stores, winnerStoreId, qtyOf }) {
                   <ProductImage
                     barcode={p.barcode}
                     name={p.name}
-                    src={p.image_url || images[p.id] || null}
+                  manufacturer={p.manufacturer}
+                  unitOfMeasure={p.unit_of_measure}
+                  isWeighted={p.is_weighted}
+                    manufacturer={p.manufacturer}
+                    unitOfMeasure={p.unit_of_measure}
+                    isWeighted={p.is_weighted}
                     size="sm"
                     className="shadow-sm ring-1 ring-gray-100"
                   />
@@ -352,7 +355,6 @@ function ComparisonMatrix({ products, stores, winnerStoreId, qtyOf }) {
 // then eats 176px of a 375px screen to repeat labels they just read. Here the
 // branch is picked once and the list answers "what does MY basket cost here".
 function MobileComparison({ products, stores, winnerStoreId, qtyOf }) {
-  const images = useProductImages(products)
   const [picked, setPicked] = useState(null)
   // Derived, never stored: a new comparison replaces `stores` wholesale, and a
   // selection kept in state would point at a branch that is no longer on screen.
@@ -468,7 +470,6 @@ function MobileComparison({ products, stores, winnerStoreId, qtyOf }) {
                 <ProductImage
                   barcode={p.barcode}
                   name={p.name}
-                  src={p.image_url || images[p.id] || null}
                   size="sm"
                   className="shadow-sm ring-1 ring-gray-100"
                 />

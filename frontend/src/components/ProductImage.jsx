@@ -1,59 +1,63 @@
 /**
- * A product tile: a real photo when we have one, otherwise a designed placeholder.
+ * ProductImage — a designed tile for every product, on every surface.
  *
- * WHY THIS IS PLACEHOLDER-FIRST
- * Open Food Facts has a usable image for 7.0% of our real GTINs (re-measured with
- * scripts/off_coverage.py — it was 2.5% two months earlier, so the commons does
- * grow). ~93% of tiles are therefore placeholders under any sourcing strategy short
- * of a paid catalogue, which is the whole design brief: absence is the NORMAL case
- * and has to read as a deliberate system, while a photo must arrive without a
- * layout shift when it exists.
+ * THERE IS NO PHOTO PATH. That is the product decision, and it is the reason this
+ * file is small: external sourcing was tried and removed. Open Food Facts had a
+ * usable image for 7.0% of our real GTINs (measured, `scripts/off_coverage.py`),
+ * and patchy coverage reads as broken — a Google fallback returned inconsistent
+ * crops, and licensed catalogues are the only route to uniformity. So the tile is
+ * generated, always, and the app makes one promise it can keep everywhere.
  *
- * Two signals do the work:
- *   HUE comes from the MANUFACTURER, so every Osem product sits in the same colour
- *     family and a brand becomes recognisable down a long list. Falls back to the
- *     barcode when the brand is unknown — stable either way, so a product never
- *     changes colour between renders.
- *   GLYPH comes from the CATEGORY, inferred from the name and unit of measure. A
- *     bottle, a carton, produce and a loaf are distinguishable at 40px in a way a
- *     Hebrew initial is not.
+ * Everything here is a pure function of the product. No network, no state, no
+ * loading, nothing to fail — the same product renders identically in the search
+ * dropdown, the cart and the comparison table, on first paint, forever.
+ *
+ * Two signals carry the identity:
+ *   HUE from the MANUFACTURER, so a brand becomes recognisable down a long list —
+ *     every Osem product shares a colour family. Falls back to the barcode, then
+ *     the name, so a tile always has a stable seed and never changes between
+ *     renders.
+ *   GLYPH from an inferred CATEGORY. At 40px a carton, a bottle, an apple and a
+ *     loaf are distinguishable in a way a Hebrew initial is not, which is why the
+ *     mark is a shape rather than a letter.
  */
-import { useEffect, useMemo, useState } from 'react'
-
-// ── PHOTOS ARE OFF ──────────────────────────────────────────────────────────
-// Turned off on the product call: the Open Food Facts packshots are inconsistent
-// in crop, background and aspect (measured 400×235 beside 144×400 in one list),
-// and a grid of them looked worse than the glyph tiles do.
-//
-// A one-line switch rather than ripped-out plumbing, because nothing behind it is
-// wasted: /products/images still resolves and caches, the contribution endpoint
-// still works, and products.image_url keeps filling in. When the presentation
-// problem is solved — a normalising proxy, fixed aspect boxes, or a licensed
-// catalogue — flip this and every call site already passes `src`.
-//
-// The camera affordance follows the same switch: its entire payoff is a visible
-// photo, so offering it while photos are hidden would promise something the
-// shopper never sees.
-const SHOW_PHOTOS = false
+import { useMemo } from 'react'
 
 const SIZES = {
-  sm: { box: 'h-10 w-10', icon: 'h-5 w-5', text: 'text-[10px]' },
-  md: { box: 'h-14 w-14', icon: 'h-7 w-7', text: 'text-xs' },
-  lg: { box: 'h-20 w-20', icon: 'h-9 w-9', text: 'text-sm' },
+  sm: { box: 'h-10 w-10', icon: 'h-5 w-5' },
+  md: { box: 'h-14 w-14', icon: 'h-7 w-7' },
+  lg: { box: 'h-20 w-20', icon: 'h-9 w-9' },
 }
 
-/** Stable hue from a seed — same brand (or product), same colour, every time. */
-function hueFor(seed) {
+/**
+ * FNV-1a — a deterministic 32-bit hash. Same seed, same tile, on every surface and
+ * every device, forever.
+ *
+ * The previous `h * 31 + charCode` version clustered badly here: Hebrew codepoints
+ * all sit in a narrow high range, so neighbouring product names produced adjacent
+ * results and, once squeezed into a 115° arc, two shades of the same teal. FNV-1a
+ * avalanches — one different character moves the whole value.
+ */
+function hash(seed) {
+  let h = 0x811c9dc5
   const s = String(seed || '')
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
-  // 150–265° keeps it in the teal→indigo range; nothing turns muddy brown.
-  return 150 + (h % 115)
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return h >>> 0
 }
 
-// Hebrew keyword → category. ORDER MATTERS: the first match wins, so families that
-// would be swallowed by a broader rule come first — חלב has to be tested before the
-// litre check, or every milk carton renders as a soft-drink bottle.
+// Six fixed stops instead of a continuous hue. A continuous range makes ADJACENT
+// products land on near-identical tiles; discrete anchors guarantee that two rows
+// in a list are either the same colour or clearly a different one, never almost.
+// All six stay in the brand's cool arc — no muddy browns, no alarm reds in a
+// grocery list — so the set still reads as one system.
+const PALETTE = [158, 187, 212, 244, 268, 322]
+
+// Hebrew keyword → category. ORDER MATTERS: first match wins, so families that a
+// broader rule would swallow come first. חלב must be tested before the litre rule
+// or every milk carton renders as a soft-drink bottle.
 const CATEGORIES = [
   ['dairy', /חלב|גבינ|יוגורט|שמנת|קוטג|לבן|חמאה|מעדן/],
   ['produce', /עגבני|מלפפון|תפוח|בננה|גזר|בצל|פלפל|חסה|אבוקדו|תפוז|לימון|אבטיח|מלון|תות|ענב|תמר|בטטה|קישוא|חציל/],
@@ -74,7 +78,7 @@ function categoryFor(name, unitOfMeasure, isWeighted) {
   return 'packet'
 }
 
-/** One flat 24×24 line glyph per category, drawn in currentColor. */
+/** One flat 24×24 line glyph per category, stroked in currentColor. */
 function CategoryGlyph({ category, className }) {
   const st = {
     stroke: 'currentColor',
@@ -125,49 +129,35 @@ export default function ProductImage({
   manufacturer = null,
   unitOfMeasure = null,
   isWeighted = false,
-  src = null,
   size = 'md',
   className = '',
-  children = null,
 }) {
-  const [failed, setFailed] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-
-  // A recycled tile must not inherit the previous product's verdict — the same
-  // component instance is reused as a list re-renders with different products.
-  useEffect(() => {
-    setLoaded(false)
-    setFailed(false)
-  }, [src])
-
   const s = SIZES[size] ?? SIZES.md
-  // Brand first: it groups a shelf visually. Barcode only when the brand is blank.
-  const hue = useMemo(() => hueFor(manufacturer || barcode || name), [manufacturer, barcode, name])
+  // Brand first: it groups a shelf visually. Barcode, then name, only as fallbacks.
+  const hue = useMemo(
+    () => PALETTE[hash(manufacturer || barcode || name) % PALETTE.length],
+    [manufacturer, barcode, name],
+  )
   const category = useMemo(
     () => categoryFor(name, unitOfMeasure, isWeighted),
     [name, unitOfMeasure, isWeighted],
   )
 
-  const shell =
-    `${s.box} ${className} relative shrink-0 overflow-hidden rounded-xl ` +
-    'ring-1 ring-black/5 dark:ring-white/10'
-
-  // The placeholder is ALWAYS the bottom layer and the photo fades in over it.
-  // That is the skeleton: no separate spinner, no layout shift, and a broken URL
-  // or a 404 reveals finished art rather than an empty box.
-  const showPhoto = SHOW_PHOTOS && src && !failed
-
   return (
     <div
-      className={shell}
-      // Inline because the hue is per-brand; Tailwind cannot enumerate 115 of them.
+      className={
+        `${s.box} ${className} relative shrink-0 overflow-hidden rounded-xl ` +
+        'ring-1 ring-black/5 dark:ring-white/10'
+      }
+      // Inline because the hue is data-derived; Tailwind cannot enumerate a palette
+      // it never sees at build time.
       style={{
         background: `linear-gradient(140deg,
           hsl(${hue} 62% 96%) 0%,
           hsl(${hue} 55% 90%) 55%,
           hsl(${hue + 12} 48% 86%) 100%)`,
       }}
-      // Decorative: the product name is already displayed next to this tile, so
+      // Decorative: the product name is already displayed beside this tile, so
       // announcing it again would just make a screen reader repeat itself.
       role="presentation"
     >
@@ -177,36 +167,9 @@ export default function ProductImage({
       >
         <CategoryGlyph category={category} className={`${s.icon} opacity-75`} />
       </div>
-      {/* A soft top highlight stops the tile reading as a flat empty box. */}
+      {/* A soft top highlight gives the tile a light source, so it reads as a
+          designed surface rather than a flat empty box. */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/45 to-transparent" />
-      {showPhoto && (
-        <img
-          src={src}
-          alt={name || ''}
-          loading="lazy"
-          decoding="async"
-          // BOTH are needed. An image served from the browser cache can finish
-          // before React attaches the synthetic onLoad, so that event never fires
-          // and the photo sits fully decoded at opacity 0 behind the placeholder —
-          // measured, two of seven tiles. The ref runs after the element exists
-          // and catches exactly that case.
-          ref={(el) => {
-            if (el && el.complete && el.naturalWidth > 0) setLoaded(true)
-          }}
-          onLoad={() => setLoaded(true)}
-          // A dead URL must not leave a half-painted image on top of the tile:
-          // `failed` unmounts this entirely and the placeholder below is already
-          // in place, so there is nothing to fall back TO — it is just revealed.
-          onError={() => setFailed(true)}
-          className={`absolute inset-0 h-full w-full bg-white object-contain transition-opacity duration-300 ${
-            loaded ? 'opacity-100' : 'opacity-0'
-          }`}
-        />
-      )}
-      {/* Overlay slot for the "contribute a photo" affordance. Rendered only while
-          there is no photo, so it can never cover a real packshot — and not at all
-          while SHOW_PHOTOS is off, since a contributed photo would stay invisible. */}
-      {SHOW_PHOTOS && !showPhoto && children}
     </div>
   )
 }

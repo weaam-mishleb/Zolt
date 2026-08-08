@@ -477,7 +477,10 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
 
     # 2. names (+ barcode for display) of the submitted products
     sub_rows = db.execute(
-        text("SELECT id, name, barcode FROM products WHERE id IN :ids").bindparams(
+        text(
+            "SELECT id, name, barcode, manufacturer, unit_of_measure, is_weighted "
+            "FROM products WHERE id IN :ids"
+        ).bindparams(
             bindparam("ids", expanding=True)
         ),
         {"ids": repr_ids},
@@ -492,6 +495,13 @@ def compare_basket(db: Session, city: str, items: list) -> dict:
             "id": rid,
             "name": (id_info[rid]["name"] or "").strip(),
             "barcode": id_info[rid]["barcode"],
+            # Carried purely so the product TILE is identical here and in search:
+            # ProductImage seeds its colour on the manufacturer and its glyph on the
+            # unit/weight, so a ProductBrief without them rendered the same product
+            # in a different colour on this surface than in the cart.
+            "manufacturer": id_info[rid]["manufacturer"],
+            "unit_of_measure": id_info[rid]["unit_of_measure"],
+            "is_weighted": id_info[rid]["is_weighted"],
         }
         for rid in repr_ids
     }

@@ -16,7 +16,6 @@ class ProductOut(BaseModel):
     quantity: float | None = None        # package size, e.g. 55 (גרם)
     is_weighted: bool | None = None      # sold by weight (butcher/produce counter)
     availability: int | None = None      # branches carrying it (search ranking + UI)
-    image_url: str | None = None         # cached only — never resolved on the search path
 
 
 class StoreOut(BaseModel):
@@ -67,7 +66,12 @@ class ProductBrief(BaseModel):
     id: int
     name: str | None = None
     barcode: str | None = None
-    image_url: str | None = None         # cached only — never resolved on the compare path
+    # Not displayed as text — these feed ProductImage, which derives a tile's colour
+    # from the manufacturer and its glyph from the unit/weight. Without them the
+    # same product renders a different tile here than in search and the cart.
+    manufacturer: str | None = None
+    unit_of_measure: str | None = None
+    is_weighted: bool | None = None
 
 
 class AppliedPromotion(BaseModel):

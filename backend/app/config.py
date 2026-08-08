@@ -53,21 +53,6 @@ class Settings(BaseSettings):
     # Comma-separated allowed origins (add your Vercel domain in production).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # ── product images ───────────────────────────────────────────────────
-    # Open Food Facts only: no key, unmetered, and the images are contributed
-    # under an open licence. A Google Custom Search fallback was built and removed
-    # — inconsistent crops that looked worse than the placeholder, on top of
-    # republishing third parties' photographs.
-    image_provider_timeout: int = 8
-    # Open Food Facts WRITE credentials, for contributing shopper photos back.
-    # Absent values mean the contribution endpoint reports itself as unavailable —
-    # never a runtime error, and never an anonymous write. Set them in .env; they
-    # are an OFF account, created by a human, and this code only forwards them.
-    off_user_id: str | None = None
-    off_password: str | None = None
-    # OFF is a volunteer-run nonprofit. Cap what one deployment can push at it.
-    off_upload_max_bytes: int = 6 * 1024 * 1024
-    off_uploads_per_day: int = 300
     # Optional regex to also allow Vercel preview URLs, e.g. https://.*\.vercel\.app$
     cors_origin_regex: str | None = None
 
