@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import CityCombobox from './CityCombobox.jsx'
+import ContributePhoto from './ContributePhoto.jsx'
 import ProductImage from './ProductImage.jsx'
 import { useProductImages } from '../hooks/useProductImages.js'
 
@@ -58,10 +59,15 @@ export default function BasketSidebar({
                 <ProductImage
                   barcode={product.barcode}
                   name={product.name}
+                  manufacturer={product.manufacturer}
+                  unitOfMeasure={product.unit_of_measure}
+                  isWeighted={product.is_weighted}
                   src={product.image_url || images[product.id] || null}
                   size="sm"
                   className="ring-1 ring-slate-200/70"
-                />
+                >
+                  <ContributePhoto productId={product.id} productName={product.name} />
+                </ProductImage>
                 <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{product.name}</span>
                 <div className="flex shrink-0 items-center gap-1 rounded-full bg-white p-0.5 ring-1 ring-slate-200">
                   <button

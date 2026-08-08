@@ -102,6 +102,9 @@ export default function SearchBar({ onAdd }) {
                 <ProductImage
                   barcode={p.barcode}
                   name={p.name}
+                  manufacturer={p.manufacturer}
+                  unitOfMeasure={p.unit_of_measure}
+                  isWeighted={p.is_weighted}
                   src={p.image_url || images[p.id] || null}
                   size="sm"
                   className="ring-1 ring-slate-200/70"

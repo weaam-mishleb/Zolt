@@ -1,22 +1,22 @@
 /**
- * ProductImage — the product tile for the comparison cart.
+ * A product tile: a real photo when we have one, otherwise a designed placeholder.
  *
  * WHY THIS IS PLACEHOLDER-FIRST
- * We measured Open Food Facts against 200 random real-GTIN products from our own
- * catalogue: 2.5% had a usable image, and the handful that matched were all
- * imports (Loacker, Frosch). There is no image source for the Israeli catalogue
- * that we can use legitimately, so for the MVP the placeholder is not a fallback
- * state — it is the normal state, and it has to look deliberate.
+ * Open Food Facts has a usable image for 7.0% of our real GTINs (re-measured with
+ * scripts/off_coverage.py — it was 2.5% two months earlier, so the commons does
+ * grow). ~93% of tiles are therefore placeholders under any sourcing strategy short
+ * of a paid catalogue, which is the whole design brief: absence is the NORMAL case
+ * and has to read as a deliberate system, while a photo must arrive without a
+ * layout shift when it exists.
  *
- * So this renders a branded tile by default and only shows a photo if a `src`
- * is genuinely available. If we ever populate `products.image_url`, pass it in
- * and the component upgrades itself; a broken URL falls back to the same tile
- * rather than a broken-image glyph.
- *
- * The tint is derived from the barcode, so a product looks the same on every
- * render and a shopping list reads as a set of distinct items rather than a
- * column of identical grey boxes. Hues are constrained to the brand's blue-green
- * arc so the cart still looks like one product.
+ * Two signals do the work:
+ *   HUE comes from the MANUFACTURER, so every Osem product sits in the same colour
+ *     family and a brand becomes recognisable down a long list. Falls back to the
+ *     barcode when the brand is unknown — stable either way, so a product never
+ *     changes colour between renders.
+ *   GLYPH comes from the CATEGORY, inferred from the name and unit of measure. A
+ *     bottle, a carton, produce and a loaf are distinguishable at 40px in a way a
+ *     Hebrew initial is not.
  */
 import { useEffect, useMemo, useState } from 'react'
 
@@ -26,7 +26,7 @@ const SIZES = {
   lg: { box: 'h-20 w-20', icon: 'h-9 w-9', text: 'text-sm' },
 }
 
-/** Stable hue from the barcode — same product, same colour, every time. */
+/** Stable hue from a seed — same brand (or product), same colour, every time. */
 function hueFor(seed) {
   const s = String(seed || '')
   let h = 0
@@ -35,20 +35,85 @@ function hueFor(seed) {
   return 150 + (h % 115)
 }
 
-function CartGlyph({ className }) {
+// Hebrew keyword → category. ORDER MATTERS: the first match wins, so families that
+// would be swallowed by a broader rule come first — חלב has to be tested before the
+// litre check, or every milk carton renders as a soft-drink bottle.
+const CATEGORIES = [
+  ['dairy', /חלב|גבינ|יוגורט|שמנת|קוטג|לבן|חמאה|מעדן/],
+  ['produce', /עגבני|מלפפון|תפוח|בננה|גזר|בצל|פלפל|חסה|אבוקדו|תפוז|לימון|אבטיח|מלון|תות|ענב|תמר|בטטה|קישוא|חציל/],
+  ['bakery', /לחם|פיתה|לחמני|בגט|חלה|מאפה|טוסט|בורקס|רוגלך/],
+  ['meat', /בשר|עוף|הודו|דג |סלמון|אנטרקוט|שניצל|קבב|נקניק|טונה|פילה|כרעי|שוק /],
+  ['drink', /שתי|מים|קולה|סודה|מיץ|בירה|יין|משקה|תה |קפה|אנרגיה/],
+]
+
+function categoryFor(name, unitOfMeasure, isWeighted) {
+  const text = `${name || ''} ${unitOfMeasure || ''}`
+  for (const [category, pattern] of CATEGORIES) {
+    if (pattern.test(text)) return category
+  }
+  // Sold by weight with no keyword hit is overwhelmingly the produce counter.
+  if (isWeighted) return 'produce'
+  // A volume unit with no keyword hit is a bottle of something.
+  if (/ליטר|מ"ל|מ'ל|מל\b|ml|liter|litre/i.test(text)) return 'drink'
+  return 'packet'
+}
+
+/** One flat 24×24 line glyph per category, drawn in currentColor. */
+function CategoryGlyph({ category, className }) {
+  const st = {
+    stroke: 'currentColor',
+    strokeWidth: 1.9,
+    strokeLinejoin: 'round',
+    strokeLinecap: 'round',
+    fill: 'none',
+  }
+  const paths = {
+    // a gable-top carton — reads as milk rather than as a plain box
+    dairy: <path d="M7 10.5 12 6l5 4.5V19a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-8.5ZM7 10.5h10M12 6V3.5" {...st} />,
+    produce: (
+      <>
+        <path d="M12 8.5c-3 0-5 2.2-5 5.4C7 17.5 9.6 21 12 21s5-3.5 5-7.1c0-3.2-2-5.4-5-5.4Z" {...st} />
+        <path d="M12 8.5V6m0 0c1.6-.4 2.8-1.4 3.2-2.6-1.7-.2-2.9.6-3.2 2.6Z" {...st} />
+      </>
+    ),
+    bakery: (
+      <>
+        <path d="M4.5 13.5c0-3.3 3.4-6 7.5-6s7.5 2.7 7.5 6v4a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1v-4Z" {...st} />
+        <path d="M9 9.8 7.7 12M13 9.6 11.7 12M17 10.2 15.7 12.4" {...st} />
+      </>
+    ),
+    meat: (
+      <>
+        <path d="M6.5 14.8c0-4 2.7-7.3 6.3-7.3 3 0 5 2 5 4.8 0 1.7-.9 3-2.3 3.7-1.2.6-1.7 1.3-1.9 2.4-.2 1.2-1.1 1.9-2.5 1.9-2.7 0-4.6-2.2-4.6-5.5Z" {...st} />
+        <circle cx="11" cy="13" r="1.9" {...st} />
+      </>
+    ),
+    drink: <path d="M10.2 3.5h3.6V6c0 .9.4 1.3 1 1.9.7.7 1.2 1.5 1.2 2.7V19a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-8.4c0-1.2.5-2 1.2-2.7.6-.6 1-1 1-1.9V3.5Z" {...st} />,
+    packet: (
+      <>
+        <path d="M7.5 7.5h9V19a1 1 0 0 1-1 1H8.5a1 1 0 0 1-1-1V7.5Z" {...st} />
+        <path d="M7.5 7.5 9 4.5h6l1.5 3M11 11.5h2" {...st} />
+      </>
+    ),
+  }
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M3 4h2.2l2.1 10.4a2 2 0 0 0 2 1.6h7.3a2 2 0 0 0 2-1.55L20.5 8H6.2"
-        stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-      />
-      <circle cx="10" cy="19.5" r="1.4" fill="currentColor" />
-      <circle cx="17" cy="19.5" r="1.4" fill="currentColor" />
+      {paths[category] ?? paths.packet}
     </svg>
   )
 }
 
-export default function ProductImage({ barcode, name, src = null, size = 'md', className = '' }) {
+export default function ProductImage({
+  barcode,
+  name,
+  manufacturer = null,
+  unitOfMeasure = null,
+  isWeighted = false,
+  src = null,
+  size = 'md',
+  className = '',
+  children = null,
+}) {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -58,8 +123,14 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
     setLoaded(false)
     setFailed(false)
   }, [src])
+
   const s = SIZES[size] ?? SIZES.md
-  const hue = useMemo(() => hueFor(barcode ?? name), [barcode, name])
+  // Brand first: it groups a shelf visually. Barcode only when the brand is blank.
+  const hue = useMemo(() => hueFor(manufacturer || barcode || name), [manufacturer, barcode, name])
+  const category = useMemo(
+    () => categoryFor(name, unitOfMeasure, isWeighted),
+    [name, unitOfMeasure, isWeighted],
+  )
 
   const shell =
     `${s.box} ${className} relative shrink-0 overflow-hidden rounded-xl ` +
@@ -67,15 +138,13 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
 
   // The placeholder is ALWAYS the bottom layer and the photo fades in over it.
   // That is the skeleton: no separate spinner, no layout shift, and a broken URL
-  // or a 404 reveals finished art rather than an empty box. Only ~7% of our GTINs
-  // have a real image (measured), so absence is the common case and has to look
-  // deliberate rather than like a failure.
+  // or a 404 reveals finished art rather than an empty box.
   const showPhoto = src && !failed
 
   return (
     <div
       className={shell}
-      // Inline because the hue is per-product; Tailwind cannot enumerate 115 of them.
+      // Inline because the hue is per-brand; Tailwind cannot enumerate 115 of them.
       style={{
         background: `linear-gradient(140deg,
           hsl(${hue} 62% 96%) 0%,
@@ -90,7 +159,7 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
         className="flex h-full w-full items-center justify-center"
         style={{ color: `hsl(${hue} 42% 42%)` }}
       >
-        <CartGlyph className={`${s.icon} opacity-70`} />
+        <CategoryGlyph category={category} className={`${s.icon} opacity-75`} />
       </div>
       {/* A soft top highlight stops the tile reading as a flat empty box. */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/45 to-transparent" />
@@ -118,6 +187,9 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
           }`}
         />
       )}
+      {/* Overlay slot for the "contribute a photo" affordance. Rendered only while
+          there is no photo, so it can never cover a real packshot. */}
+      {!showPhoto && children}
     </div>
   )
 }

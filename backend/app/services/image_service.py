@@ -194,4 +194,152 @@ def provider_state() -> dict:
     return {
         "providers": ["off"],
         "timeout_s": settings.image_provider_timeout,
+        "contribution_enabled": contribution_enabled(),
+        "uploads_today": _upload_cap.used,
+        "uploads_per_day": _upload_cap.limit,
+    }
+
+
+# ── contributing back ───────────────────────────────────────────────────────
+#
+# The commons we read from is the one we can also grow. OFF coverage of our
+# catalogue moved 2.5% → 7.0% in two months on volunteer photographs, and every
+# photo contributed here is licensed for us permanently — the opposite trade to
+# harvesting a retailer's packshots, which decays the moment they change a URL or
+# block us.
+#
+# Three deliberate limits, because the receiving end is a nonprofit:
+#   * real GTINs only — OFF is keyed by barcode and cannot accept the internal
+#     '<chain_id>_<code>' codes this project invents;
+#   * a size ceiling, checked before the bytes are forwarded;
+#   * a per-process daily cap, so a bug in a client cannot turn this deployment
+#     into a flood.
+#
+# Credentials are an OFF account the operator creates and puts in .env. This code
+# only forwards them, and with either value missing the endpoint reports itself
+# unavailable rather than attempting an anonymous write.
+_OFF_UPLOAD_URL = "https://world.openfoodfacts.org/cgi/product_image_upload.pl"
+# 'front_he' is the Hebrew-locale front-of-pack field, which is the one a shopper
+# standing in an Israeli aisle can actually photograph correctly.
+_OFF_IMAGE_FIELD = "front_he"
+
+
+class _DailyCap:
+    """Per-process daily counter. A courtesy limit toward OFF, not an accountant."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self._day: str | None = None
+        self._used = 0
+
+    def take(self) -> bool:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today != self._day:
+            self._day, self._used = today, 0
+        if self._used >= self.limit:
+            return False
+        self._used += 1
+        return True
+
+    @property
+    def used(self) -> int:
+        return self._used
+
+
+_upload_cap = _DailyCap(settings.off_uploads_per_day)
+
+
+def contribution_enabled() -> bool:
+    """Both OFF credentials present."""
+    return bool(settings.off_user_id and settings.off_password)
+
+
+def contribute_photo(db: Session, product_id: int, image: bytes, content_type: str) -> dict:
+    """Send a shopper's photo to Open Food Facts, then adopt the result locally.
+
+    Returns {"ok": bool, "reason": str | None, "image_url": str | None}. Never
+    raises for an expected refusal — the caller turns this into a message beside a
+    camera button, not a stack trace.
+    """
+    if not contribution_enabled():
+        return {"ok": False, "reason": "not_configured", "image_url": None}
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        return {"ok": False, "reason": "unsupported_type", "image_url": None}
+    if not image or len(image) > settings.off_upload_max_bytes:
+        return {"ok": False, "reason": "too_large", "image_url": None}
+
+    row = db.execute(
+        text("SELECT id, barcode, name FROM products WHERE id = :id"), {"id": product_id}
+    ).mappings().first()
+    if row is None:
+        return {"ok": False, "reason": "unknown_product", "image_url": None}
+    if not _is_real_gtin(row["barcode"]):
+        # An internal code has no meaning outside this database. Uploading it would
+        # create a junk OFF entry, which is worse than not contributing.
+        return {"ok": False, "reason": "not_a_gtin", "image_url": None}
+    if not _upload_cap.take():
+        return {"ok": False, "reason": "daily_cap", "image_url": None}
+
+    body, headers = _multipart(
+        {
+            "code": row["barcode"],
+            "imagefield": _OFF_IMAGE_FIELD,
+            "user_id": settings.off_user_id,
+            "password": settings.off_password,
+        },
+        file_field=f"imgupload_{_OFF_IMAGE_FIELD}",
+        filename=f"{row['barcode']}.jpg",
+        file_bytes=image,
+        content_type=content_type,
+    )
+    try:
+        req = urllib.request.Request(_OFF_UPLOAD_URL, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=settings.image_provider_timeout * 3) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError) as exc:
+        log.warning("OFF upload failed for %s: %s", row["barcode"], exc)
+        return {"ok": False, "reason": "upload_failed", "image_url": None}
+
+    if str(payload.get("status")) not in {"status ok", "ok", "1"}:
+        log.info("OFF rejected the upload for %s: %s", row["barcode"], payload)
+        return {"ok": False, "reason": "rejected", "image_url": None}
+
+    # Adopt it immediately rather than waiting for the recheck interval: the
+    # shopper who just took the photo should see their own picture on the tile.
+    url = from_off(row["barcode"])
+    if url:
+        try:
+            db.execute(
+                _UPDATE, {"url": url, "src": "off", "at": datetime.now(), "id": row["id"]}
+            )
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            log.warning("uploaded to OFF but could not cache locally", exc_info=True)
+    return {"ok": True, "reason": None, "image_url": url}
+
+
+def _multipart(fields: dict, *, file_field: str, filename: str, file_bytes: bytes,
+               content_type: str) -> tuple[bytes, dict[str, str]]:
+    """Build a multipart/form-data body with the stdlib.
+
+    Hand-rolled on purpose: adding `requests` for one POST would put a dependency
+    in the API image that nothing else needs, and this project pins with `==`.
+    """
+    boundary = "----ZoltOFF" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    out = bytearray()
+    for key, value in fields.items():
+        out += f"--{boundary}\r\n".encode()
+        out += f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode()
+        out += f"{value}\r\n".encode()
+    out += f"--{boundary}\r\n".encode()
+    out += (
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode()
+    out += file_bytes
+    out += f"\r\n--{boundary}--\r\n".encode()
+    return bytes(out), {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "User-Agent": _OFF_UA,
     }

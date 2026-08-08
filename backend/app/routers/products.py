@@ -1,7 +1,7 @@
 """Product search / autocomplete endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -61,3 +61,28 @@ def product_images(
 @router.get("/images/status", summary="Which image providers are active")
 def image_status():
     return image_service.provider_state()
+
+
+@router.post("/{product_id}/photo", summary="Contribute a product photo to Open Food Facts")
+async def contribute_photo(
+    product_id: int,
+    photo: UploadFile = File(..., description="JPEG/PNG/WebP front-of-pack photo"),
+    db: Session = Depends(get_db),
+):
+    """Forward a shopper's photo to Open Food Facts, then adopt it locally.
+
+    This is the deliberate inverse of scraping a retailer's packshots. OFF coverage
+    of our catalogue went 2.5% → 7.0% in two months on volunteer photographs, and a
+    photo contributed here is licensed for us permanently — where a harvested image
+    decays the moment the source changes a URL or blocks us.
+
+    The upload is PUBLIC: it goes into an open database under OFF's licence. That is
+    the point, and the UI says so before the camera opens.
+
+    Never 500s on an expected refusal — an unconfigured account, a non-GTIN barcode
+    or an oversized file come back as a reason string the UI shows beside the button.
+    """
+    body = await photo.read()
+    return image_service.contribute_photo(
+        db, product_id, body, photo.content_type or "application/octet-stream"
+    )

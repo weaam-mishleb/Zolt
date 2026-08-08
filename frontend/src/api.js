@@ -32,6 +32,13 @@ export function resolveProductImages(ids) {
   return http(`/products/images?${params.toString()}`)
 }
 
+export function contributeProductPhoto(productId, file) {
+  // multipart, so no Content-Type header — the browser must set the boundary.
+  const body = new FormData()
+  body.append('photo', file)
+  return fetch(`${BASE}/products/${productId}/photo`, { method: 'POST', body }).then((r) => r.json())
+}
+
 export function getCities() {
   return http('/stores/cities')
 }
