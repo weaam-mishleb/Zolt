@@ -296,9 +296,15 @@ function ComparisonMatrix({ products, stores, winnerStoreId, qtyOf }) {
               </td>
               {stores.map((s) => {
                 const isWinner = s.store_id === winnerStoreId
+                const it = maps[s.store_id][p.id]
                 return (
                   <td key={s.store_id} className={tdClass(isWinner)}>
-                    <LinePrice it={maps[s.store_id][p.id]} />
+                    <div className="flex flex-col items-center gap-1.5">
+                      <LinePrice it={it} />
+                      {it?.available_promotion && (
+                        <UpsellTag promo={it.available_promotion} />
+                      )}
+                    </div>
                   </td>
                 )
               })}

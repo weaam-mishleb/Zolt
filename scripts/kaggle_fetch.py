@@ -29,10 +29,14 @@ Exit codes (the workflow branches on these):
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import random
 import subprocess
 import sys
 import time
+from io import StringIO
+from pathlib import Path, PurePosixPath
 
 MISSING = "missing"
 TRANSIENT = "transient"
@@ -58,6 +62,8 @@ _TRANSIENT_SIGNS = (
     "remote end closed",
 )
 
+_INDEX_CACHE = ".kaggle-file-index.json"
+
 
 def classify(output: str) -> str:
     """MISSING / TRANSIENT / FATAL from a failed download's output.
@@ -82,16 +88,178 @@ def backoff(attempt: int, base: float = 2.0, cap: float = 60.0) -> float:
     return random.uniform(window / 2, window)
 
 
+def _parse_file_page(output: str) -> tuple[list[str], str | None]:
+    """Parse one ``kaggle datasets files --csv`` page.
+
+    Kaggle 2.x writes both its upgrade warning and ``Next Page Token = ...``
+    above the CSV header, so feeding the whole output to DictReader silently
+    interprets the warning as the header and returns no paths.
+    """
+    lines = output.splitlines()
+    token = None
+    for line in lines:
+        if line.startswith("Next Page Token = "):
+            token = line.removeprefix("Next Page Token = ").strip() or None
+
+    try:
+        header = next(i for i, line in enumerate(lines) if line.startswith("name,"))
+    except StopIteration as exc:
+        raise ValueError("Kaggle file listing contained no CSV header") from exc
+
+    rows = csv.DictReader(StringIO("\n".join(lines[header:])))
+    paths = [row["name"].strip() for row in rows if row.get("name", "").strip()]
+    return paths, token
+
+
+def _listing_page(
+    dataset: str,
+    page_token: str | None,
+    *,
+    attempts: int,
+    sleep,
+) -> tuple[str, subprocess.CompletedProcess | None]:
+    command = [
+        "kaggle", "datasets", "files", dataset,
+        "--csv", "--page-size", "200",
+    ]
+    if page_token:
+        command.extend(("--page-token", page_token))
+
+    for attempt in range(attempts):
+        proc = subprocess.run(command, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return OK, proc
+
+        combined = f"{proc.stdout}\n{proc.stderr}"
+        verdict = classify(combined)
+        print(combined.strip(), file=sys.stderr)
+        # A listing-level 404 means the dataset/ref is broken, not that one
+        # requested file is absent. It must therefore stay fatal.
+        if verdict != TRANSIENT:
+            return FATAL, None
+        if attempt == attempts - 1:
+            return FATAL, None
+        sleep(backoff(attempt))
+    return FATAL, None
+
+
+def list_remote_paths(
+    dataset: str,
+    dest: str,
+    *,
+    attempts: int = 5,
+    sleep=time.sleep,
+) -> tuple[str, list[str]]:
+    """List every remote path once per job and cache it beside downloads."""
+    destination = Path(dest)
+    cache_path = destination / _INDEX_CACHE
+    try:
+        cached = json.loads(cache_path.read_text("utf-8"))
+        if cached.get("dataset") == dataset and isinstance(cached.get("paths"), list):
+            return OK, cached["paths"]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
+        pass
+
+    paths: list[str] = []
+    page_token = None
+    while True:
+        verdict, proc = _listing_page(
+            dataset,
+            page_token,
+            attempts=attempts,
+            sleep=sleep,
+        )
+        if verdict != OK or proc is None:
+            return FATAL, []
+        try:
+            page_paths, page_token = _parse_file_page(proc.stdout)
+        except ValueError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return FATAL, []
+        paths.extend(page_paths)
+        if not page_token:
+            break
+
+    destination.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"dataset": dataset, "paths": paths}, ensure_ascii=False)
+    cache_path.write_text(payload, encoding="utf-8")
+    return OK, paths
+
+
+def resolve_remote_path(
+    dataset: str,
+    filename: str,
+    dest: str,
+    *,
+    attempts: int = 5,
+    sleep=time.sleep,
+) -> tuple[str, str | None]:
+    """Resolve a requested basename to the dataset's current nested path."""
+    verdict, paths = list_remote_paths(dataset, dest, attempts=attempts, sleep=sleep)
+    if verdict != OK:
+        return verdict, None
+
+    requested = PurePosixPath(filename).as_posix()
+    if requested in paths:                  # old/root layout remains supported
+        return OK, requested
+
+    basename = PurePosixPath(filename).name
+    matches = [path for path in paths if PurePosixPath(path).name == basename]
+    if not matches:
+        return MISSING, None
+    if len(matches) > 1:
+        print(
+            f"::error::{basename} is ambiguous in {dataset}: {matches}",
+            file=sys.stderr,
+        )
+        return FATAL, None
+    return OK, matches[0]
+
+
+def _flatten_download(remote_path: str, filename: str, dest: str) -> str:
+    """Move a nested Kaggle extraction to the root filename loaders expect."""
+    destination = Path(dest)
+    target = destination / PurePosixPath(filename).name
+    nested = destination.joinpath(*PurePosixPath(remote_path).parts)
+
+    # Kaggle versions differ: some preserve the archive path, others flatten a
+    # single-file extraction. Prefer the just-downloaded nested file when both
+    # exist so a stale root copy can never win.
+    if nested != target and nested.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        nested.replace(target)
+
+    if not target.is_file():
+        print(
+            f"::error::Kaggle reported success but {target} was not extracted",
+            file=sys.stderr,
+        )
+        return FATAL
+    return OK
+
+
 def fetch(dataset: str, filename: str, dest: str, attempts: int = 5, sleep=time.sleep) -> str:
-    """Download `filename`, retrying only the transient failures."""
+    """Resolve and download `filename`, retrying only transient failures."""
+    verdict, remote_path = resolve_remote_path(
+        dataset,
+        filename,
+        dest,
+        attempts=attempts,
+        sleep=sleep,
+    )
+    if verdict != OK or remote_path is None:
+        return verdict
+    if remote_path != filename:
+        print(f"· resolved {filename} → {remote_path}")
+
     for attempt in range(attempts):
         proc = subprocess.run(
-            ["kaggle", "datasets", "download", "-d", dataset, "-f", filename,
+            ["kaggle", "datasets", "download", "-d", dataset, "-f", remote_path,
              "-p", dest, "--force", "--unzip"],
             capture_output=True, text=True,
         )
         if proc.returncode == 0:
-            return OK
+            return _flatten_download(remote_path, filename, dest)
 
         combined = f"{proc.stdout}\n{proc.stderr}"
         verdict = classify(combined)

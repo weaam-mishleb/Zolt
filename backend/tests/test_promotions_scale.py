@@ -26,6 +26,24 @@ def test_nightly_workflow_loads_the_full_promotion_catalogue():
     assert 'python -m etl.promotions --chains "$CHAIN" --full' in workflow
 
 
+def test_nightly_workflow_rejects_a_fake_green_noop():
+    workflow = (ROOT / ".github" / "workflows" / "etl-matrix.yml").read_text("utf-8")
+    assert "actions/upload-artifact@v4" in workflow
+    assert "actions/download-artifact@v4" in workflow
+    assert "scripts.etl_outcome_gate check" in workflow
+    assert '--require-promotions "$LOAD_PROMOTIONS"' in workflow
+
+
+def test_desktop_and_mobile_both_render_available_promotion_tags():
+    component = (
+        ROOT / "frontend" / "src" / "components" / "ComparisonTable.jsx"
+    ).read_text("utf-8")
+    desktop, mobile = component.split("// ── Mobile: one branch at a time ──", maxsplit=1)
+    marker = "<UpsellTag promo={it.available_promotion} />"
+    assert marker in desktop
+    assert marker in mobile
+
+
 def test_full_promo_file_wins_when_both_inputs_exist(tmp_path):
     from etl.promotions import _resolve_promo_path
 
