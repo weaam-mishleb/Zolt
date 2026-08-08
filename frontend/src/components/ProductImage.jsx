@@ -20,6 +20,22 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 
+// ── PHOTOS ARE OFF ──────────────────────────────────────────────────────────
+// Turned off on the product call: the Open Food Facts packshots are inconsistent
+// in crop, background and aspect (measured 400×235 beside 144×400 in one list),
+// and a grid of them looked worse than the glyph tiles do.
+//
+// A one-line switch rather than ripped-out plumbing, because nothing behind it is
+// wasted: /products/images still resolves and caches, the contribution endpoint
+// still works, and products.image_url keeps filling in. When the presentation
+// problem is solved — a normalising proxy, fixed aspect boxes, or a licensed
+// catalogue — flip this and every call site already passes `src`.
+//
+// The camera affordance follows the same switch: its entire payoff is a visible
+// photo, so offering it while photos are hidden would promise something the
+// shopper never sees.
+const SHOW_PHOTOS = false
+
 const SIZES = {
   sm: { box: 'h-10 w-10', icon: 'h-5 w-5', text: 'text-[10px]' },
   md: { box: 'h-14 w-14', icon: 'h-7 w-7', text: 'text-xs' },
@@ -139,7 +155,7 @@ export default function ProductImage({
   // The placeholder is ALWAYS the bottom layer and the photo fades in over it.
   // That is the skeleton: no separate spinner, no layout shift, and a broken URL
   // or a 404 reveals finished art rather than an empty box.
-  const showPhoto = src && !failed
+  const showPhoto = SHOW_PHOTOS && src && !failed
 
   return (
     <div
@@ -188,8 +204,9 @@ export default function ProductImage({
         />
       )}
       {/* Overlay slot for the "contribute a photo" affordance. Rendered only while
-          there is no photo, so it can never cover a real packshot. */}
-      {!showPhoto && children}
+          there is no photo, so it can never cover a real packshot — and not at all
+          while SHOW_PHOTOS is off, since a contributed photo would stay invisible. */}
+      {SHOW_PHOTOS && !showPhoto && children}
     </div>
   )
 }
