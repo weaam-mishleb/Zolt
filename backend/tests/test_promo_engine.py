@@ -380,16 +380,18 @@ def test_promotion_for_an_item_not_in_the_basket_is_ignored():
 #
 # These pin a behaviour that has already been mistaken for a bug once.
 #
-# Production, פז-yellow אריאל: XL energy drink at ₪9.90 shelf price carries BOTH
-# a per-unit "אקסל ב5" (FIXED_PRICE, min_qty=1, ₪5.00) and a bundle "3ב17"
-# (BUNDLE_PRICE, min_qty=3, ₪17.00). Three units cost ₪15 under the per-unit deal
-# and ₪17 under the bundle, so the engine takes the per-unit one. That looked like
-# "the bundle is being divided by 3 and applied to a single unit", and the
-# proposed fix — force bundle modulo arithmetic — would have made the basket MORE
-# expensive than the shop actually charges.
-#
 # The rule being locked: whichever offer produces the lower total wins, and a
-# bundle never becomes mandatory just because it exists.
+# bundle never becomes mandatory just because it exists. A per-unit FIXED_PRICE
+# beating a bundle is legitimate and must not be "corrected" into forced bundle
+# arithmetic, which would charge more than the shop does.
+#
+# NOTE on the case that first raised this: the production example was
+# 'קרוסייל תכנית אוגוסט- אקסל ב5' — ₪5.00 per unit against a ₪9.90 shelf price.
+# That one turned out to be a CROSS-SALE, conditional on buying a sandwich, and it
+# is now rejected outright before the engine sees it (see is_conditional in
+# services/promotions.py and its tests). These cases therefore describe an
+# unconditional per-unit price, which is a real thing the feed also carries — the
+# selection rule below is correct, it was the input that was not.
 def test_per_unit_price_beats_a_more_expensive_bundle():
     per_unit = promo(pid=1, kind="FIXED_PRICE", discounted_price=5)      # ₪5 each
     bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
@@ -435,3 +437,36 @@ def test_bundle_remainder_stays_at_shelf_price():
     bundle = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
     r = price_basket([line(1, 4, "9.90")], [bundle], NOW)
     assert r["final_total"] == pytest.approx(17.0 + 9.90)
+
+
+# ── the corrected production case, priced end to end ────────────────────────
+#
+# With the cross-sale filtered out upstream, the only offer left on the XL line is
+# the genuine "3 ב-17" bundle. These state, in money, what the register charges.
+_XL_SHELF = "9.90"
+_XL_BUNDLE = promo(pid=2, kind="BUNDLE_PRICE", min_qty=3, discounted_price=17)
+
+
+@pytest.mark.parametrize(
+    "qty, expected",
+    [
+        (1, 9.90),           # one can is NOT ₪5, and NOT ₪17/3 — it is shelf price
+        (2, 19.80),          # still short of the bundle
+        (3, 17.00),          # exactly one bundle
+        (4, 26.90),          # one bundle + one unit at shelf price
+        (6, 34.00),          # two bundles
+        (7, 43.90),          # two bundles + one unit
+    ],
+)
+def test_xl_line_matches_the_register(qty, expected):
+    r = price_basket([line(1, qty, _XL_SHELF)], [_XL_BUNDLE], NOW)
+    assert r["final_total"] == pytest.approx(expected)
+
+
+def test_a_conditional_cross_sale_reaching_the_engine_would_change_the_price():
+    """Not a wish — a guard rail. It documents WHY the filter has to live upstream:
+    the engine is pure arithmetic and cannot know that ₪5 had a condition, so if
+    one ever gets through, the price silently becomes wrong rather than failing."""
+    cross_sale = promo(pid=1, kind="FIXED_PRICE", discounted_price=5)
+    r = price_basket([line(1, 1, _XL_SHELF)], [cross_sale, _XL_BUNDLE], NOW)
+    assert r["final_total"] == pytest.approx(5.0)   # the price we must never quote

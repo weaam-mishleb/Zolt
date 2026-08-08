@@ -324,3 +324,65 @@ def test_the_applied_promotion_is_not_reported_against_itself():
     store = _store(applied_id=2, charged=17.0, qty=3)
     _attach_alternative(store, [_p(2, "BUNDLE_PRICE", 3, 17)], {99: 7})
     assert store["items"][0]["alternative_promotion"] is None
+
+
+# ── conditional promotions must never price a basket ────────────────────────
+#
+# The bug this closes: 'קרוסייל תכנית אוגוסט- אקסל ב5' arrives as FIXED_PRICE,
+# min_qty=1, ₪5.00 — indistinguishable from an unconditional price cut. Yellow
+# sells one XL for ₪9.90; the ₪5 is conditional on buying a sandwich. Quoting ₪5
+# for a single can is a price the register will not honour.
+import dataclasses  # noqa: E402
+
+import pytest  # noqa: E402
+
+from backend.app.services.promotions import is_conditional  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "קרוסייל תכנית אוגוסט- אקסל ב5",   # the production string
+        "קרוס סייל אוגוסט",
+        "מבצע מותנה בהצגת כרטיס",
+        "בקניה מעל 50 ש\"ח",
+        "בקנייה של כריך",                  # the two-yod spelling
+        "קופון אלביט-2 חטיפים",
+        "קופון במבה קלאסי",
+    ],
+)
+def test_conditional_descriptions_are_rejected(description):
+    assert is_conditional(description) is True
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "משקה אנרגיה  250 מ ל 3ב19XL",
+        "במבה פרו/קלאסי/יום הולדת 80 גרם 3ב20",
+        "סודה נורדיק 3ב16",
+        "אקסל ב5",           # a genuine unconditional per-unit price survives
+        None,
+        "",
+    ],
+)
+def test_unconditional_descriptions_survive(description):
+    assert is_conditional(description) is False
+
+
+def test_a_conditional_promotion_is_never_advertised_either():
+    """`_worth_advertising` gates the badge. Even though the loader already drops
+    these, the badge must not be the one place a fabricated deal leaks through."""
+    from backend.app.services.promotions import _worth_advertising
+
+    cross_sale = _Promo(
+        id=1, reward_kind="FIXED_PRICE", canonical_ids=frozenset({7}),
+        gift_canonical_ids=frozenset(), min_qty=_D("1"), max_qty=None,
+        discounted_price=_D("5"), discount_rate=None, discount_amount=None,
+        min_basket_amount=None, allow_stacking=False,
+        description="קרוסייל תכנית אוגוסט- אקסל ב5", starts_at=None, ends_at=None,
+    )
+    assert _worth_advertising(cross_sale, _D("9.90")) is False
+    # the same numbers without the conditional wording are fine
+    honest = dataclasses.replace(cross_sale, description="אקסל ב5")
+    assert _worth_advertising(honest, _D("9.90")) is True

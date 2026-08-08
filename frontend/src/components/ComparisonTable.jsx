@@ -91,8 +91,12 @@ function UpsellTag({ promo }) {
 function AlternativeNote({ promo }) {
   const label = promoLabel(promo)
   if (!label) return null
+  // `block` + `whitespace-normal`: in a 150px desktop column this has to WRAP
+  // rather than be hidden or clipped. Showing the runner-up is the point — a
+  // shopper who knows the branch advertises "3 ב-17" needs to see we compared it
+  // at every screen size, not just on a phone.
   return (
-    <span className="text-[10px] font-medium leading-none text-slate-400">
+    <span className="block whitespace-normal text-[10px] font-medium leading-tight text-slate-400">
       יש גם {label} · יקר יותר
     </span>
   )
@@ -320,6 +324,11 @@ function ComparisonMatrix({ products, stores, winnerStoreId, qtyOf }) {
                       <LinePrice it={it} />
                       {it?.available_promotion && (
                         <UpsellTag promo={it.available_promotion} />
+                      )}
+                      {/* Shown at every width. The column is 150px, so this wraps
+                          onto a second line rather than being hidden. */}
+                      {it?.alternative_promotion && (
+                        <AlternativeNote promo={it.alternative_promotion} />
                       )}
                     </div>
                   </td>

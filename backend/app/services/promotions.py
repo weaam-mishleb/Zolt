@@ -54,6 +54,49 @@ _SELECT_ACTIVE = text(
 ).bindparams(bindparam("stores", expanding=True), bindparam("canon", expanding=True))
 
 
+# ── conditional promotions ──────────────────────────────────────────────────
+#
+# The feed has no flag for "this offer has a condition", so a cross-sale arrives
+# indistinguishable from an unconditional price cut. Production example:
+#
+#     'קרוסייל תכנית אוגוסט- אקסל ב5'   FIXED_PRICE, min_qty=1, ₪5.00
+#
+# Yellow never sells one XL for ₪5 — it is ₪5 *when you buy a sandwich*. Taken at
+# face value the engine quotes ₪5 for a single can that the register rings up at
+# ₪9.90, and it does it while claiming to have found the best price. A promotion
+# we cannot honour is worse than no promotion: the whole product is a promise
+# about what the shopper will pay.
+#
+# The description text is the only signal that exists, so it is what we filter on.
+# Rejected BEFORE the engine sees them rather than only in `_worth_advertising`,
+# because that function gates the upsell badge — it never touched the price.
+#
+# Both spellings of בקניה / בקנייה are listed deliberately. This codebase has
+# already lost a fix to a single missing yod (the דלית / דליית alias that never
+# fired), and a filter that silently stops matching is the failure mode that costs
+# the most to find.
+_CONDITIONAL_MARKERS = (
+    "קרוסייל",      # cross-sale — conditional on buying something else
+    "קרוס סייל",
+    "מותנה",        # explicitly "conditional"
+    "בקניה",        # "upon buying …"
+    "בקנייה",
+    "קופון",        # coupon — needs a code we cannot verify
+)
+
+
+def is_conditional(description) -> bool:
+    """True when the description says the offer depends on something we cannot see.
+
+    Deliberately a substring test on free text. It over-rejects — a legitimate
+    offer whose blurb happens to mention a coupon is dropped too — and that is the
+    right direction to err: a missed discount disappoints, an invented one is a
+    price we quoted and cannot honour.
+    """
+    text_ = description or ""
+    return any(marker in text_ for marker in _CONDITIONAL_MARKERS)
+
+
 def canonical_ids_for(db: Session, product_ids: list[int]) -> dict[int, int]:
     """{product_id: canonical_id} for the basket's representative products."""
     if not product_ids:
@@ -78,6 +121,10 @@ def load_active_promotions(
     # A promotion spans several items, so rows are folded back into one object.
     acc: dict[tuple[int, int], dict] = {}
     for r in rows:
+        # Dropped here — the single point where promotions enter the pricing path
+        # — so no downstream caller can reintroduce one by accident.
+        if is_conditional(r["description"]):
+            continue
         key = (r["store_id"], r["id"])
         entry = acc.get(key)
         if entry is None:
@@ -188,6 +235,12 @@ def _worth_advertising(promo: Promotion, unit_price: Decimal) -> bool:
     nothing: it invents a saving that does not exist and asks the shopper to buy
     more to get it.
     """
+    # Belt and braces: `load_active_promotions` already drops these before the
+    # engine or the badge can see them. This fires only if a future caller
+    # assembles promotions some other way, and it calls the same helper so the two
+    # can never disagree about what "conditional" means.
+    if is_conditional(promo.description):
+        return False
     kind = promo.reward_kind
     if kind == "FIXED_PRICE":
         return (
