@@ -6,9 +6,12 @@ them, and the ranking has to reflect that.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy.exc import OperationalError
 
-from backend.app.services.promotions import _rerank, apply_promotions
+from backend.app.services.promo_engine import Promotion
+from backend.app.services.promotions import _attach_available, _rerank, apply_promotions
 
 
 def store(sid, total, *, complete=True, missing=0, chain="שופרסל"):
@@ -114,6 +117,39 @@ def test_limit_none_shows_every_branch():
     res = result([store(i, float(i)) for i in range(1, 16)])
     _rerank(res, limit=None)
     assert res["shown_store_count"] == 15
+
+
+def test_available_promotion_rejects_bad_deal_before_selecting_threshold():
+    """An expensive qty=1 meal deal must not hide a genuine qty=3 bundle."""
+    line = {
+        "product_id": 7,
+        "found": True,
+        "quantity": 1,
+        "unit_price": 9.90,
+        "applied_promotion": None,
+        "available_promotion": None,
+    }
+    meal_deal = Promotion(
+        id=1,
+        reward_kind="FIXED_PRICE",
+        canonical_ids=frozenset({42}),
+        min_qty=Decimal("1"),
+        discounted_price=Decimal("34.90"),
+        description="meal deal",
+    )
+    bundle = Promotion(
+        id=2,
+        reward_kind="BUNDLE_PRICE",
+        canonical_ids=frozenset({42}),
+        min_qty=Decimal("3"),
+        discounted_price=Decimal("16"),
+        description="3 for 16",
+    )
+
+    _attach_available({"items": [line]}, [meal_deal, bundle], {7: 42})
+
+    assert line["available_promotion"]["id"] == 2
+    assert line["available_promotion"]["units_needed"] == 2.0
 
 
 def test_empty_store_list_is_handled():

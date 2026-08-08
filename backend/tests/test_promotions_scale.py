@@ -19,6 +19,10 @@ def test_promotions_use_a_dedicated_5000_row_write_batch():
 
 def test_nightly_workflow_loads_the_full_promotion_catalogue():
     workflow = (ROOT / ".github" / "workflows" / "etl-matrix.yml").read_text("utf-8")
+    assert 'OPTIONAL+=( "promo_full_file_${CHAIN}.csv" )' in workflow
+    # The smaller publication remains available for the loader's explicit
+    # full→snapshot fallback when a chain omits PromoFull.
+    assert 'OPTIONAL+=( "promo_file_${CHAIN}.csv" )' in workflow
     assert 'python -m etl.promotions --chains "$CHAIN" --full' in workflow
 
 

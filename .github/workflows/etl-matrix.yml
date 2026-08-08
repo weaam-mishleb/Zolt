@@ -226,7 +226,14 @@ jobs:
           # Promo files are optional (not every chain publishes one); the store
           # and price files are NOT — without them the load is meaningless.
           OPTIONAL=( )
-          [ "$LOAD_PROMOTIONS" != "true" ] || OPTIONAL+=( "promo_file_${CHAIN}.csv" )
+          if [ "$LOAD_PROMOTIONS" = "true" ]; then
+            # The loader receives --full below, so the matching input must
+            # actually exist on the runner. Keep the snapshot alongside it:
+            # when a supplier does not publish PromoFull today, the loader's
+            # explicit full→snapshot fallback still has something to consume.
+            [ "$FULL" = "false" ] || OPTIONAL+=( "promo_full_file_${CHAIN}.csv" )
+            OPTIONAL+=( "promo_file_${CHAIN}.csv" )
+          fi
 
           # Two different things look like "no file", and they must not share a
           # fate. A 404 means the upstream scraper did not publish this chain

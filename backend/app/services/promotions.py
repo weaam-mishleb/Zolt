@@ -200,20 +200,25 @@ def _attach_available(store: dict, promos: list[Promotion], canon_of: dict[int, 
     Only ever set where `applied_promotion` is None, so the two cannot both be
     populated and the UI never has to choose between them.
     """
-    by_canonical: dict[int, Promotion] = {}
+    by_canonical: dict[int, list[Promotion]] = {}
     for promo in promos:
         for cid in promo.canonical_ids:
-            current = by_canonical.get(cid)
-            # Most reachable first — the lowest threshold is the one worth
-            # nudging toward. `id` only breaks ties, so the pick is stable.
-            if current is None or (promo.min_qty, promo.id) < (current.min_qty, current.id):
-                by_canonical[cid] = promo
+            by_canonical.setdefault(cid, []).append(promo)
 
     for item in store["items"]:
         if not item.get("found") or item.get("applied_promotion") or item.get("unit_price") is None:
             continue
-        promo = by_canonical.get(canon_of.get(item["product_id"]))
-        if promo is None or not _worth_advertising(promo, Decimal(str(item["unit_price"]))):
+        unit_price = Decimal(str(item["unit_price"]))
+        candidates = by_canonical.get(canon_of.get(item["product_id"]), ())
+        # Reject fake/expensive deals before ranking reachability. Otherwise a
+        # qty=1 meal deal above shelf price shadows a real qty=3 bundle merely
+        # because its threshold sorts first.
+        promo = min(
+            (candidate for candidate in candidates if _worth_advertising(candidate, unit_price)),
+            key=lambda candidate: (candidate.min_qty, candidate.id),
+            default=None,
+        )
+        if promo is None:
             continue
         short = float(promo.min_qty) - float(item["quantity"])
         item["available_promotion"] = {
