@@ -25,6 +25,13 @@ export function searchProducts(q, limit = 8) {
   return http(`/products/search?${params.toString()}`)
 }
 
+export function resolveProductImages(ids) {
+  // Batched on purpose: one request per tile would multiply a metered backend
+  // lookup by the length of the list. The endpoint caps at 50 ids.
+  const params = new URLSearchParams({ ids: ids.join(',') })
+  return http(`/products/images?${params.toString()}`)
+}
+
 export function getCities() {
   return http('/stores/cities')
 }

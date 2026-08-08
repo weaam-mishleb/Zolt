@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { searchProducts } from '../api'
 import ProductImage from './ProductImage.jsx'
 import { useDebounce } from '../hooks/useDebounce'
+import { useProductImages } from '../hooks/useProductImages.js'
 
 // "55 גרם" / "1 ק"ג" — package size from the feed, so generic butcher-counter
 // names ("בשר אדום טרי") become distinguishable in the dropdown.
@@ -14,6 +15,9 @@ function sizeLabel(p) {
 export default function SearchBar({ onAdd }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
+  // Second step of the image pipeline: search returns only what the backend has
+  // already cached, so ask it to resolve the rest once.
+  const images = useProductImages(results)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -95,7 +99,13 @@ export default function SearchBar({ onAdd }) {
                     design: Open Food Facts has a usable image for 7% of our real
                     GTINs (measured, scripts/off_coverage.py), so the generated
                     monogram is the normal case rather than a fallback. */}
-                <ProductImage barcode={p.barcode} name={p.name} size="sm" className="ring-1 ring-slate-200/70" />
+                <ProductImage
+                  barcode={p.barcode}
+                  name={p.name}
+                  src={p.image_url || images[p.id] || null}
+                  size="sm"
+                  className="ring-1 ring-slate-200/70"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium text-slate-800">{p.name}</span>
                   {(p.manufacturer || sizeLabel(p) || p.is_weighted || p.availability > 0) && (

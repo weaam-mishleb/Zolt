@@ -16,6 +16,7 @@ class ProductOut(BaseModel):
     quantity: float | None = None        # package size, e.g. 55 (גרם)
     is_weighted: bool | None = None      # sold by weight (butcher/produce counter)
     availability: int | None = None      # branches carrying it (search ranking + UI)
+    image_url: str | None = None         # cached only — never resolved on the search path
 
 
 class StoreOut(BaseModel):
@@ -66,6 +67,7 @@ class ProductBrief(BaseModel):
     id: int
     name: str | None = None
     barcode: str | None = None
+    image_url: str | None = None         # cached only — never resolved on the compare path
 
 
 class AppliedPromotion(BaseModel):

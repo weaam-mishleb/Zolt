@@ -11,7 +11,7 @@ from ..schemas import (
     BasketSummaryRequest,
     BasketSummaryResponse,
 )
-from ..services import comparison
+from ..services import comparison, image_service
 
 router = APIRouter(prefix="/basket", tags=["basket"])
 
@@ -44,7 +44,14 @@ def compare(req: BasketCompareRequest, db: Session = Depends(get_db)):
     are returned with their missing items marked but without a rank.
     """
     _validate_items(req.items)
-    return comparison.compare_basket(db, req.city, req.items)
+    result = comparison.compare_basket(db, req.city, req.items)
+    # Cache reads only — a comparison must not wait on Open Food Facts, and must
+    # never trigger a metered Google call for ten branches' worth of products.
+    products = result.get("products") or []
+    urls = image_service.cached_urls(db, [p.get("id") for p in products if p.get("id")])
+    for product in products:
+        product["image_url"] = urls.get(product.get("id"))
+    return result
 
 
 @router.post(

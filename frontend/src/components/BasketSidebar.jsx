@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import CityCombobox from './CityCombobox.jsx'
 import ProductImage from './ProductImage.jsx'
+import { useProductImages } from '../hooks/useProductImages.js'
 
 export default function BasketSidebar({
   items,
@@ -16,6 +17,7 @@ export default function BasketSidebar({
   comparing,
 }) {
   const count = items.reduce((sum, it) => sum + it.quantity, 0)
+  const images = useProductImages(items.map((it) => it.product))
 
   return (
     <aside className="lg:sticky lg:top-24 lg:self-start">
@@ -56,6 +58,7 @@ export default function BasketSidebar({
                 <ProductImage
                   barcode={product.barcode}
                   name={product.name}
+                  src={product.image_url || images[product.id] || null}
                   size="sm"
                   className="ring-1 ring-slate-200/70"
                 />

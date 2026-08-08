@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     on_render: bool = Field(default=False, validation_alias="RENDER")
     # Comma-separated allowed origins (add your Vercel domain in production).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    # ── product images ───────────────────────────────────────────────────
+    # Open Food Facts needs no key and is unmetered. Google Custom Search is
+    # BOTH keyed and metered, so it stays off until both values are present —
+    # an absent key must mean "provider disabled", never a runtime error on a
+    # shopper's request.
+    google_api_key: str | None = None
+    google_search_engine_id: str | None = None
+    # Paid calls per process per day. $5/1,000 queries, so 200 is ~$1/day/worker
+    # worst case. Reaching it degrades to the placeholder, not to an error.
+    image_google_daily_budget: int = 200
+    image_provider_timeout: int = 8
     # Optional regex to also allow Vercel preview URLs, e.g. https://.*\.vercel\.app$
     cors_origin_regex: str | None = None
 

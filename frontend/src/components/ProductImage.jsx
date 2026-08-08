@@ -18,7 +18,7 @@
  * column of identical grey boxes. Hues are constrained to the brand's blue-green
  * arc so the cart still looks like one product.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const SIZES = {
   sm: { box: 'h-10 w-10', icon: 'h-5 w-5', text: 'text-[10px]' },
@@ -50,6 +50,14 @@ function CartGlyph({ className }) {
 
 export default function ProductImage({ barcode, name, src = null, size = 'md', className = '' }) {
   const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  // A recycled tile must not inherit the previous product's verdict — the same
+  // component instance is reused as a list re-renders with different products.
+  useEffect(() => {
+    setLoaded(false)
+    setFailed(false)
+  }, [src])
   const s = SIZES[size] ?? SIZES.md
   const hue = useMemo(() => hueFor(barcode ?? name), [barcode, name])
 
@@ -57,19 +65,12 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
     `${s.box} ${className} relative shrink-0 overflow-hidden rounded-xl ` +
     'ring-1 ring-black/5 dark:ring-white/10'
 
-  if (src && !failed) {
-    return (
-      <div className={shell}>
-        <img
-          src={src}
-          alt={name || ''}
-          loading="lazy"
-          onError={() => setFailed(true)}
-          className="h-full w-full object-contain bg-white"
-        />
-      </div>
-    )
-  }
+  // The placeholder is ALWAYS the bottom layer and the photo fades in over it.
+  // That is the skeleton: no separate spinner, no layout shift, and a broken URL
+  // or a 404 reveals finished art rather than an empty box. Only ~7% of our GTINs
+  // have a real image (measured), so absence is the common case and has to look
+  // deliberate rather than like a failure.
+  const showPhoto = src && !failed
 
   return (
     <div
@@ -93,6 +94,30 @@ export default function ProductImage({ barcode, name, src = null, size = 'md', c
       </div>
       {/* A soft top highlight stops the tile reading as a flat empty box. */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/45 to-transparent" />
+      {showPhoto && (
+        <img
+          src={src}
+          alt={name || ''}
+          loading="lazy"
+          decoding="async"
+          // BOTH are needed. An image served from the browser cache can finish
+          // before React attaches the synthetic onLoad, so that event never fires
+          // and the photo sits fully decoded at opacity 0 behind the placeholder —
+          // measured, two of seven tiles. The ref runs after the element exists
+          // and catches exactly that case.
+          ref={(el) => {
+            if (el && el.complete && el.naturalWidth > 0) setLoaded(true)
+          }}
+          onLoad={() => setLoaded(true)}
+          // A dead URL must not leave a half-painted image on top of the tile:
+          // `failed` unmounts this entirely and the placeholder below is already
+          // in place, so there is nothing to fall back TO — it is just revealed.
+          onError={() => setFailed(true)}
+          className={`absolute inset-0 h-full w-full bg-white object-contain transition-opacity duration-300 ${
+            loaded ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+      )}
     </div>
   )
 }
